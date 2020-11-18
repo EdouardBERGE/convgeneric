@@ -880,10 +880,13 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 
 		/* hardware sprite are limited to 15 different colors */
 		hasblack=GetIDXFromPalette(palette,0,0,0);
+		if (hasblack>=0) {
+			printf("Image has black color (%d)\n",hasblack);
+		} else {
+			printf(KWARNING"Image has no black color => disabling -b option\n"KNORMAL);
+			parameter->black=0;
+		}
 		if (maxcoul>15) {
-			if (hasblack) {
-				printf("Image has black color (%d)\n",hasblack);
-			}
 			if (hasblack>=0 && parameter->black) {
 				printf("-> black color is transparency\n");
 			} else {
@@ -972,6 +975,14 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 	
 
 	if (!parameter->splitraster) {
+		if (parameter->black) {
+			if (palette[0]!=0 || palette[1]!=0 || palette[2]!=0) {
+				printf(KERROR"FATAL: there is an error with first color which is not black as expected\n"KNORMAL);
+				exit(0);
+			}
+		}
+
+
 		printf("paletteplus: defw ");
 		for (i=parameter->hsp;i<maxcoul+parameter->hsp-parameter->black;i++) {
 			printf("%s#%04X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
@@ -1803,8 +1814,7 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 				}
 				/* set next filename */
 				if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
-				else if (filenumber==100) sprintf(newname+strlen(newname)-3,"c00",filenumber++);
-				else sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
+				else if (filenumber>=100) sprintf(newname+strlen(newname)-3,"%03d",filenumber++);
 
 			} else {
 				printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
@@ -1837,8 +1847,7 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 						/* set next filename */
 
 						if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
-						else if (filenumber==100) sprintf(newname+strlen(newname)-3,"c00",filenumber++);
-						else sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
+						else if (filenumber>=100) { printf("error\n");}
 					} else {
 						printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
 						FileWriteBinary(newname,transdata+woffset,byteleft);
@@ -1912,10 +1921,11 @@ void Usage(char **argv)
 	printf("sprite options: (default progressive output)\n");
 	printf("-scan            scan sprites inside border\n");
 	printf("-single          only one pixel per byte to the right side\n");
-	printf("-size <geometry> set sprite dimensions ex: 16x16 \n");
+	printf("-size <geometry> set sprite dimensions in pixels. Ex: -size 16x16 \n");
 	printf("-offset <pos>    set start offset from top/left ex: 20,2\n");
 	printf("-mask            add mask info to data (see doc)\n");
 	printf("-c <maxsprite>   maximum number of sprites to extract\n");
+	printf("-meta <geometry> gather sprites when scanning. Ex: -meta 3x2\n");
 	printf("\n");
 	printf("screen options:\n");
 	printf("-scr             enable screen output (interlaced data)\n");
