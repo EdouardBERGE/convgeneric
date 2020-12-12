@@ -117,6 +117,19 @@ int score;
 int ga;
 };
 
+
+void color_error(int r, int v, int b) {
+	static char rvb[4096]={0};
+	int idx;
+
+	idx=(r>>4)+((v>>4)<<4)+((b>>4)<<8);
+
+	if (!rvb[idx]) {
+		printf(KERROR"rvb color #%02X%02X%02X not found\n"KNORMAL,r,v,b);
+		rvb[idx]=1;
+	}
+}
+
 int GetIDXFromPixel(unsigned char *palette, unsigned char *pixel)
 {
 	#undef FUNC
@@ -130,7 +143,7 @@ int GetIDXFromPixel(unsigned char *palette, unsigned char *pixel)
 	for (i=0;i<16;i++) {
 		if (palette[i*3+0]==pixel[0] && palette[i*3+1]==pixel[1] && palette[i*3+2]==pixel[2]) return i;
 	}
-printf("color #%02X%02X%02X not found\n",pixel[0],pixel[1],pixel[2]);
+	color_error(pixel[0],pixel[1],pixel[2]);
 	return -1;
 }
 int GetIDXFromPalette(unsigned char *palette, int r, int v, int b)
@@ -155,7 +168,7 @@ int GetIDXFromPalette(unsigned char *palette, int r, int v, int b)
 		if (palette[i*3+0]==r && palette[i*3+1]==v && palette[i*3+2]==b) return i;
 	}
 
-printf("rvb color #%02X%02X%02X not found\n",r,v,b);
+	color_error(r,v,b);
 	return -1;
 }
 
