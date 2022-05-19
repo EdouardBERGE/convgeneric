@@ -62,6 +62,7 @@ struct s_parameter {
 	int split;
 	int grad;
 	int asmdump;
+	int tiles;
 	char *exportpalettefilename;
 	char *importpalettefilename;
 	/* screen options */
@@ -586,6 +587,9 @@ void Build(struct s_parameter *parameter)
                 c o n v e r t e r    v 2
         ****************************************/
 	unsigned char *cpcdata=NULL;        /* dynamic workspace */
+	int tileidx[65536];
+	int tilewidth;
+	int itile;
 	int idata=0;                        /* current output */
 	int pixrequested;                   /* how many pix do we need for a byte? */
 	int limitcolors=16;                 /* max number of colors regarding the options */
@@ -691,6 +695,34 @@ void Build(struct s_parameter *parameter)
 			if (photo->data[i*4+3]>0) {
 			} else {
 				png_has_transparency=1;
+			}
+		}
+
+		//@@TODO faire une option pour ça
+		for (i=0;i<photo->height*photo->width;i++) {
+			if (photo->data[i*4+3]>0) {
+				/* we scan only visible colors */
+				r=photo->data[i*4+0]&0xF0;
+				v=photo->data[i*4+1]&0xF0;
+				b=photo->data[i*4+2]&0xF0;
+
+				for (j=0;j<maxcoul;j++) {
+					if (r==palette[j*3+0] && v==palette[j*3+1] && b==palette[j*3+2]) break;
+				}
+				if (j==maxcoul) {
+					// search for closest color
+					int distance=256*256*256,idist,curdist;
+					for (j=0;j<maxcoul;j++) {
+						curdist=abs((palette[j*3+0]-r)*(palette[j*3+1]-v)*(palette[j*3+2]-b));
+						if (curdist<distance) {
+							distance=curdist;
+							idist=j;
+						}
+					}
+					photo->data[i*4+0]=palette[idist*3+0];
+					photo->data[i*4+1]=palette[idist*3+1];
+					photo->data[i*4+2]=palette[idist*3+2];
+				}
 			}
 		}
 
@@ -1662,6 +1694,11 @@ int reg[MAXSPLIT];
 	    s c r e e n   &   s p r i t e     m o d e
 	*************************************************/
 		/* step */
+		if (parameter->tiles) {
+			printf("[mode tiles]\n");
+			tilewidth=0;
+			itile=0;
+		}
 		if (parameter->single) {
 			istep=1;
 			printf("mode single: one pixel per byte output\n");
@@ -1683,7 +1720,7 @@ int reg[MAXSPLIT];
 					/* prepare sprite info */
 					curspi.adr=idata;
 					for (ys=0;ys<parameter->sy;ys++) {
-						/* sreen mode means adressing memory like CRTC does */
+						/* screen mode means adressing memory like CRTC does */
 						if (parameter->scrmode) {
 							idata=scradr[curline++];
 							if (curline>=maxscradr) {
@@ -1768,13 +1805,41 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 					curspi.size=maxdata-curspi.adr;
 					curspi.x=parameter->sx;
 					curspi.y=parameter->sy;
-					/* update sprite info */
+
+					/* tiles mode (if selected) will check for unicity */
+					if (parameter->tiles) {
+						int scheck;
+						for (scheck=0;scheck<ispi;scheck++) {
+							if (memcmp(cpcdata+curspi.adr,cpcdata+spinfo[scheck].adr,curspi.size)==0) {
+								// we already stored this tile!
+								break;
+							}
+						}
+						tileidx[itile++]=scheck;
+						if (j==parameter->oy) tilewidth++;
+						if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info));
+					} else {
 //printf("extraction %d %d/%d\n",ispi+1,curspi.x,curspi.y);
-					ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info));
-					if (parameter->maxextract<=ispi) {printf("*break*\n");i=photo->width;j=photo->height;break;}
+						/* update sprite info */
+						ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info));
+						if (parameter->maxextract<=ispi) {printf("*break*\n");i=photo->width;j=photo->height;break;}
+					}
 				}
 			}
 		}
+	}
+	if (parameter->tiles) {
+		i=j=0;
+		printf("tilemap\n");
+		while (i<itile) {
+			if (!j) printf("defb %d",tileidx[i++]); else printf(",%d",tileidx[i++]);
+			j++;
+			if (j==tilewidth) {
+				printf("\n");
+				j=0;
+			}
+		}
+		printf("\n");
 	}
 	/* info */
 	if (!parameter->scrmode) {
@@ -1811,30 +1876,41 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 		FileWriteBinaryClose(newname);
 	} else {
 		/**************** écriture des fichiers binaires *************/
-		woffset=0;
-		while (byteleft) {
-			FileRemoveIfExists(newname);
-			if (byteleft>parameter->split) {
-				if (filenumber<5) {
-					printf(KIO"writing %d bytes in %s\n"KNORMAL,parameter->split,newname);				
-				}
-				FileWriteBinary(newname,cpcdata+woffset,parameter->split);
-				woffset+=parameter->split;
-				FileWriteBinaryClose(newname);
-				byteleft-=parameter->split;
-				if (filenumber==5 && byteleft>0) {
-					printf("(...)\n");
-				}
-				/* set next filename */
-				if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
-				else if (filenumber>=100) sprintf(newname+strlen(newname)-3,"%03d",filenumber++);
+		if (!parameter->tiles) {
+			woffset=0;
+			while (byteleft) {
+				FileRemoveIfExists(newname);
+				if (byteleft>parameter->split) {
+					if (filenumber<5) {
+						printf(KIO"writing %d bytes in %s\n"KNORMAL,parameter->split,newname);				
+					}
+					FileWriteBinary(newname,cpcdata+woffset,parameter->split);
+					woffset+=parameter->split;
+					FileWriteBinaryClose(newname);
+					byteleft-=parameter->split;
+					if (filenumber==5 && byteleft>0) {
+						printf("(...)\n");
+					}
+					/* set next filename */
+					if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
+					else if (filenumber>=100) sprintf(newname+strlen(newname)-3,"%03d",filenumber++);
 
-			} else {
-				printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
-				FileWriteBinary(newname,cpcdata+woffset,byteleft);
-				byteleft=0;
+				} else {
+					printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
+					FileWriteBinary(newname,cpcdata+woffset,byteleft);
+					byteleft=0;
+				}
+				FileWriteBinaryClose(newname);
+			}
+		} else {
+			FileRemoveIfExists(newname);
+			byteleft=0;
+			for (i=0;i<ispi;i++) {
+				FileWriteBinary(newname,cpcdata+spinfo[i].adr,spinfo[i].size);
+				byteleft+=spinfo[i].size;
 			}
 			FileWriteBinaryClose(newname);
+			printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
 		}
 		/***************** écriture des masques ******************************/
 		parameter->split*=2;
@@ -1939,6 +2015,7 @@ void Usage(char **argv)
 	printf("-mask            add mask info to data (see doc)\n");
 	printf("-c <maxsprite>   maximum number of sprites to extract\n");
 	printf("-meta <geometry> gather sprites when scanning. Ex: -meta 3x2\n");
+	printf("-tiles           extract uniques sprites + map\n");
 	printf("\n");
 	printf("screen options:\n");
 	printf("-scr             enable screen output (interlaced data)\n");
@@ -2117,6 +2194,12 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					parameter->scrmode=1;
 				} else {
 					Usage(argv);
+				}
+				break;
+			case 't':
+			case 'T':
+				if (stricmp(argv[i],"-tiles")==0) {
+					parameter->tiles=1;
 				}
 				break;
 			case 'p':
