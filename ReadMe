@@ -1,0 +1,43 @@
+### convgeneric
+
+convgeneric is a simple COMMAND LINE tool designed to transcode PNG files in almost any CPC format
+
+here is a VERY short doc, i advise you to use it and read the command line options (or send mail)
+
+## What this tool cannot do
+
+convgeneric cannot reduce colors in an image, you may those tools instead:
+- Martine https://github.com/jeromelesaux/martine
+- ConvIMGCpc https://github.com/DemoniakLudo/ConvImgCpc
+
+## Multimode support
+
+For screen or soft-sprite transcoding, you must set the mode resolution with the option -m <mode>
+
+## Software sprite conversion
+
+Default output is a progressive output of any size.
+
+If you specify a size to extract then convgeneric will crop the image and transcode it. That's it.
+
+If you want to transcode more than one sprite, you need to set the sprite number to extract with -c <nb> option. Then convgeneric will run trough the image, until it cannot extract that size anymore or until it reaches the count.
+
+For multiple sprite output, you may appreciate a flat output for the binary file, instead of many files.
+
+As convgeneric can handle transparency, you may export up to 16 colors software sprite + transparency map, so forget those lame coder limitations of one color reserved for transparency ;)
+
+## Tile extraction
+
+As software sprite extraction, you can submit an image, a tile size and convgeneric will extract a map, the tiles and some source code (prototype)
+
+## Screen conversion
+
+with the -scr command line option, you tell convgeneric that you want a "ready for use" screen data.
+
+For overscan or non standard screen, there is a lot of options to define the screen (see the integrated help)
+
+## Hardware sprite extraction
+
+with the -hsp option, you tell convgeneric to extract 1 pixel/1 pixel hardware sprite of 16x16 size. convgeneric can handle real transparency, so i advise to use it!
+
+
