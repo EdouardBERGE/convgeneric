@@ -1059,6 +1059,7 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 	}
 	
 	cpcdata=MemMalloc(32768+photo->width*photo->height+32);
+	memset(cpcdata,0,32768+photo->width*photo->height+32);
 
 	idata=0;
 	curline=0;
