@@ -37,6 +37,7 @@
 #define KIO      ""
 #endif
 
+#include<math.h>
 
 enum e_packed_format {
 E_PACKED_CPC_MODE0=0,
@@ -83,6 +84,9 @@ struct s_parameter {
 	int forceextraction;
 	int keep_empty;
 	int metax,metay;
+	/* demomaking options */
+	int rotoffset;
+	char *rotoffsetfilename;
 };
 
 struct s_sprite_info {
@@ -1829,6 +1833,43 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 			}
 		}
 	}
+
+
+	if (parameter->rotoffset) {
+		int xcenter,ycenter,wmax,iridx=0;
+		float ang;
+		unsigned char *rotoffsetmap;
+		// contrôle de cohérence sur les données CPC produites en amont? Minimum
+		if (parameter->scrmode) {
+			printf("cannot process rotomap in screen mode...\n");
+			exit(-344);
+		}
+		// trouver le centre des données pour connaitre la hauteur maximale possible de la map
+		xcenter=parameter->sx>>1;
+		ycenter=parameter->sy>>1;
+		if (xcenter>ycenter) wmax=xcenter; else wmax=ycenter;
+
+		rotoffsetmap=malloc(wmax*256);
+		memset(rotoffsetmap,0,wmax*256);
+
+		// ensuite on part du centre
+		printf("rotoffset central byte will be: #%02X\n",cpcdata[xcenter+ycenter*parameter->sx]);
+		// et on fait des cercles petit à petit
+		for (i=1;i<wmax;i++) {
+			for (j=0;j<256;j++) {
+				ang=(float)j/256.0*3.1415926545*2.0; // en radian
+				rotoffsetmap[iridx++]=cpcdata[(int)(cos(ang)*((float)i+0.5))+xcenter+((int)(sin(ang)*((float)i+0.5))+ycenter)*parameter->sx];
+			}
+		}
+
+		FileRemoveIfExists(parameter->rotoffsetfilename);
+		FileWriteBinary(parameter->rotoffsetfilename,rotoffsetmap,wmax*256);
+		FileWriteBinaryClose(parameter->rotoffsetfilename);
+		free(rotoffsetmap);
+		printf(KIO"rotoffsetmap written %d bytes\n"KNORMAL,wmax*256);
+	}
+
+
 	if (parameter->tiles) {
 		i=j=0;
 		printf("tilemap\n");
@@ -2007,6 +2048,8 @@ void Usage(char **argv)
 	printf("-exnfo <file>    export assembly informations about extracted zones\n");
 	printf("-expal <file>    export palette in a text file\n");
 	printf("-impal <file>    import palette from a text file\n");
+	printf("demomaking options:\n");
+	printf("-rotoffset <file> export rototexture for rotoffset\n");
 	printf("\n");
 	printf("sprite options: (default progressive output)\n");
 	printf("-scan            scan sprites inside border\n");
@@ -2158,6 +2201,17 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					Usage(argv);
 				}
 				break;
+			case 'r':
+			case 'R':if (stricmp(argv[i],"-rotoffset")==0) {
+					 if (i+1<argc) {
+						parameter->rotoffsetfilename=argv[++i];
+						parameter->rotoffset=1;
+						parameter->single=1; // force single output!
+					 } else {
+						 Usage(argv);
+					 }
+				 }
+				 break;
 			case 's':
 			case 'S':if (stricmp(argv[i],"-split")==0) {
 					i++;
