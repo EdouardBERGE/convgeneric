@@ -77,7 +77,7 @@ struct s_parameter {
 	int splitraster;
 	/* hardware sprite options */
 	int hsp;
-	int scan;
+	int scan,fontscan;
 	int maxextract;
 	int black;
 	int packed; /* 0, 4, 2 */
@@ -87,6 +87,8 @@ struct s_parameter {
 	/* demomaking options */
 	int rotoffset;
 	char *rotoffsetfilename;
+	int heightmap;
+	char *heightmapfilename;
 };
 
 struct s_sprite_info {
@@ -496,12 +498,83 @@ printf("reinit in %d/%d | ",*i,*j);
 printf("\n");
 }
 
+void FontAutoScan(struct s_parameter *parameter, struct s_png_info *photo, unsigned char *palette, int *i, int *j)
+{
+	#undef FUNC
+	#define FUNC "FontAutoScan"
+
+	static int ystart=-1;
+	int hasdata,x,y;
+
+	// yscan / find first line of data
+	if (ystart==-1) {
+		// offset start
+		*i=parameter->ox;
+		*j=parameter->oy;
+		while (GetIDXFromPalette(palette, photo->data[(*i+*j*photo->width)*4+0],photo->data[(*i+*j*photo->width)*4+1],photo->data[(*i+*j*photo->width)*4+2])<=0) {
+			(*i)++;
+			if (*i>=photo->width) {
+				*i=parameter->ox;
+				(*j)++;
+				if (*j>=photo->height) break;
+			}
+		}
+		printf("@@DBG first data line = %d\n",*j);
+
+		parameter->sy=0;
+		hasdata=1;
+		y=*j;
+		while (hasdata>0) {
+			for (x=parameter->ox;x<photo->width && hasdata<=0;x++) hasdata=GetIDXFromPalette(palette, photo->data[(x+y*photo->width)*4+0],photo->data[(x+y*photo->width)*4+1],photo->data[(x+y*photo->width)*4+2]);
+			parameter->sy++;
+			y++;
+			if (y>=photo->height) break;
+		}
+		printf("@@DBG font height = %d\n",parameter->sy);
+	}
+
+	// xscan / find first data column
+	while (hasdata<=0) {
+		for (y=*j;y<parameter->sy && hasdata<=0;y++) {
+			hasdata=GetIDXFromPalette(palette, photo->data[(x+y*photo->width)*4+0],photo->data[(x+y*photo->width)*4+1],photo->data[(x+y*photo->width)*4+2]);
+		}
+		if (hasdata<=0) (*i)++;
+
+		if (*i>=photo->width) {
+			printf("@@DBG EOL!!! (unfinished)\n");
+			*j=*j+parameter->sy;
+			*i=parameter->ox;
+
+			*i=photo->width;
+			*j=photo->height;
+			return;
+
+			break;
+		}
+	}
+
+	// xscan / find end of data column
+	parameter->sx=0;
+	while (hasdata>0) {
+		for (y=*j;y<parameter->sy && hasdata<=0;y++) {
+			hasdata=GetIDXFromPalette(palette, photo->data[(x+y*photo->width)*4+0],photo->data[(x+y*photo->width)*4+1],photo->data[(x+y*photo->width)*4+2]);
+		}
+		if (hasdata>0) parameter->sx++;
+	}
+	
+	printf("@@DBG char size = %dx%d\n",parameter->sx,parameter->sy);
+	
+	parameter->sx=0; // variable width @@TODO
+}
+
 void AutoScan(struct s_parameter *parameter, struct s_png_info *photo, unsigned char *palette, int *i, int *j)
 {
 	#undef FUNC
 	#define FUNC "AutoScan"
 
-	if (parameter->scan) {
+	if (parameter->fontscan) {
+		FontAutoScan(parameter,photo,palette,i,j);
+	} else if (parameter->scan) {
 		if (parameter->hsp) {
 			AutoScanHSP(parameter,photo,palette,i,j);
 		} else {
@@ -656,6 +729,20 @@ void Build(struct s_parameter *parameter)
 
         photo=PNGRead32(parameter->filename);
         if (!photo) exit(-2);
+
+	if (parameter->heightmap) {
+		unsigned char *heightmap=NULL;
+
+        	printf(KIO"Image %dx%d will be converted to heightmap (raw data)\n",photo->width,photo->height);
+		heightmap=malloc(photo->width*photo->height);
+		for (i=0;i<photo->width*photo->height;i++) heightmap[i]=photo->data[i*4+1]; //Blue
+		FileRemoveIfExists(parameter->heightmapfilename);
+		FileWriteBinary(parameter->heightmapfilename,heightmap,photo->width*photo->height);
+		FileWriteBinaryClose(parameter->heightmapfilename);
+		free(heightmap);
+		printf(KIO"heightmap written %d bytes\n"KNORMAL,photo->width*photo->height);
+		exit(0);
+	}
 
 	if (parameter->importpalettefilename) {
 		/* load palette from a text file */
@@ -2027,6 +2114,47 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 	semi-generic body of program
 ***************************************/
 
+
+void Help(char *zecommand) {
+	#undef FUNC
+	#define FUNC "Help"
+	
+	if (zecommand[0]=='-') zecommand++; // skip dash
+
+	if (strcmp(zecommand,"flat")==0) {
+		printf("-flat option:\n");
+		printf("instead of producing one file per extraction (in sprite mode)\n");
+		printf("or 16K file for overscan extraction, all files are gathered\n");
+		printf("into one file\n");
+	} else if (strcmp(zecommand,"split")==0) {
+		printf("-split option:\n");
+		printf("define output split size\n");
+		printf("the default value is 16K for screen output\n");
+		printf("the default value depend on sprite size for HSP/sprite output\n");
+		printf("\n");
+		printf("example: convgeneric myfile.png -split 4K\n");
+		printf("or:      convgeneric myfile.png -split 4096\n");
+	} else if (strcmp(zecommand,"")==0) {
+		printf("\n");
+		printf("\n");
+	} else if (strcmp(zecommand,"a")==0) {
+		printf("\n");
+		printf("\n");
+	} else if (strcmp(zecommand,"b")==0) {
+		printf("\n");
+		printf("\n");
+	} else if (strcmp(zecommand,"c")==0) {
+		printf("\n");
+		printf("\n");
+	} else if (strcmp(zecommand,"d")==0) {
+		printf("\n");
+		printf("\n");
+	} else if (strcmp(zecommand,"e")==0) {
+		printf("\n");
+		printf("\n");
+	}
+}
+
 /*
 	Usage
 	display the mandatory parameters
@@ -2038,9 +2166,11 @@ void Usage(char **argv)
 	
 	printf("usage: %.*s.exe <pngfile> <options>\n",(int)(sizeof(__FILENAME__)-3),__FILENAME__);
 	printf("\n");
+	printf("integrated help: convgeneric help <command>\n");
+	printf("\n");
 	printf("general options:\n");
 	printf("-o <file>        full output filename\n");
-	printf("-flat            output one file instead of 16K split\n");
+	printf("-flat            output one file for all extractions\n");
 	printf("-split <size>    split output files with size ex: 4K or 4096\n");
 	printf("-m <mode>        output mode (0,1,2)\n");
 	printf("-g               sort palette from darkest to brightest color\n");
@@ -2048,11 +2178,14 @@ void Usage(char **argv)
 	printf("-exnfo <file>    export assembly informations about extracted zones\n");
 	printf("-expal <file>    export palette in a text file\n");
 	printf("-impal <file>    import palette from a text file\n");
+	printf("\n");
 	printf("demomaking options:\n");
 	printf("-rotoffset <file> export rototexture for rotoffset\n");
+	printf("-heightmap <file> export heightmap\n");
 	printf("\n");
 	printf("sprite options: (default progressive output)\n");
 	printf("-scan            scan sprites inside border\n");
+	printf("-fontscan        font extraction\n");
 	printf("-single          only one pixel per byte to the right side\n");
 	printf("-size <geometry> set sprite dimensions in pixels. Ex: -size 16x16 \n");
 	printf("-offset <pos>    set start offset from top/left ex: 20,2\n");
@@ -2067,7 +2200,7 @@ void Usage(char **argv)
 	printf("-lb <nblines>    number of lines per block for screen output (for CPC+ split)\n");
 	printf("-ls <nblines>    number of lines of 1st screen in extended screen output\n");
 	printf("-w <width>       force output screen width in bytes\n");
-	printf("-splitraster     split-raster analysis");
+	printf("-splitraster     split-raster analysis\n");
 	printf("\n");
 	printf("hardware sprite options:\n");
 	printf("-hsp             enable hardware sprite mode\n");
@@ -2151,6 +2284,21 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 			case 'G':
 				parameter->grad=1;
 				break;
+			case 'h':
+			case 'H':if (stricmp(argv[i],"-heightmap")==0) {
+					 if (i+1<argc) {
+						parameter->heightmapfilename=argv[++i];
+						parameter->heightmap=1;
+						parameter->single=1; // force single output!
+					 } else {
+						 Usage(argv);
+					 }
+				 } else if (stricmp(argv[i],"-hsp")==0) {
+					parameter->hsp=1;
+				 } else {
+					Usage(argv);
+				 }
+				 break;
 			case 'k':
 			case 'K':
 				parameter->keep_empty=1;
@@ -2231,6 +2379,8 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					parameter->splitraster=1;
 				} else if (stricmp(argv[i],"-single")==0) {
 					parameter->single=1;
+				} else if (stricmp(argv[i],"-fontscan")==0) {
+					parameter->fontscan=1;
 				} else if (stricmp(argv[i],"-scan")==0) {
 					parameter->scan=1;
 				} else if (stricmp(argv[i],"-size")==0) {
@@ -2284,13 +2434,6 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 			case 'B':
 			case 'b':
 				parameter->black=1;
-				break;
-			case 'H':
-			case 'h':if (stricmp(argv[i],"-hsp")==0) {
-					parameter->hsp=1;
-				} else {
-					Usage(argv);
-				}
 				break;
 			default:
 				Usage(argv);		
