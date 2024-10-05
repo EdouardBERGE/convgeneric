@@ -2036,6 +2036,8 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 					if (parameter->tiles) {
 						int scheck;
 						
+						if (j==parameter->oy) tilewidth++; // on compte la largeur sur la première ligne
+										   //
 						if (!tiletrans) {
 							for (scheck=0;scheck<ispi;scheck++) {
 								if (memcmp(cpcdata+curspi.adr,cpcdata+spinfo[scheck].adr,curspi.size)==0) {
@@ -2044,7 +2046,6 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 								}
 							}
 							tileidx[itile++]=scheck; // on stocke la tile dans la megamap
-							if (j==parameter->oy) tilewidth++; // on compte la largeur sur la première ligne
 							if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info)); // on ajoute si la tile n'existait pas
 						} else {
 							tileidx[itile++]=-1; // transparence, maximum en négatif
