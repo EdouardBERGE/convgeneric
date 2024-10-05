@@ -694,7 +694,7 @@ void Build(struct s_parameter *parameter)
         ****************************************/
 	unsigned char *cpcdata=NULL;        /* dynamic workspace */
 	int *tileidx=NULL;
-	int tilewidth,tileheight,tiletrans=-1;
+	int tilewidth,tileheight,tiletrans;
 	int scrtilex,scrtiley;
 	int itile;
 	int idata=0;                        /* current output */
@@ -2022,6 +2022,9 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 					}
 					if (xs==itrans) {
 						memset(&cpcdata[curspi.adr],0,curspi.size); // full trans => enforce no data
+						tiletrans=1;
+					} else {
+						tiletrans=0;
 					}
 
 					/* update sprite info */
@@ -2032,15 +2035,20 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 					/* tiles mode (if selected) will check for unicity */
 					if (parameter->tiles) {
 						int scheck;
-						for (scheck=0;scheck<ispi;scheck++) {
-							if (memcmp(cpcdata+curspi.adr,cpcdata+spinfo[scheck].adr,curspi.size)==0) {
-								// we already stored this tile!
-								break;
+						
+						if (!tiletrans) {
+							for (scheck=0;scheck<ispi;scheck++) {
+								if (memcmp(cpcdata+curspi.adr,cpcdata+spinfo[scheck].adr,curspi.size)==0) {
+									// we already stored this tile!
+									break;
+								}
 							}
+							tileidx[itile++]=scheck; // on stocke la tile dans la megamap
+							if (j==parameter->oy) tilewidth++; // on compte la largeur sur la première ligne
+							if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info)); // on ajoute si la tile n'existait pas
+						} else {
+							tileidx[itile++]=-1; // transparence, maximum en négatif
 						}
-						tileidx[itile++]=scheck; // on stocke la tile dans la megamap
-						if (j==parameter->oy) tilewidth++; // on compte la largeur sur la première ligne
-						if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info)); // on ajoute si la tile n'existait pas
 					} else {
 //printf("extraction %d %d/%d\n",ispi+1,curspi.x,curspi.y);
 						/* update sprite info */
@@ -2162,21 +2170,24 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 			}
 			printf("\n");
 		} else {
+			scrtilex=parameter->scrx/parameter->sx;
+			scrtiley=parameter->scry/parameter->sy;
 			printf(";*****************************\n");
 			printf(";   tilescreen  %d x %d\n",tilewidth/scrtilex,tileheight/scrtiley);
 			printf(";*****************************\n");
-			scrtilex=parameter->scrx/parameter->sx;
-			scrtiley=parameter->scry/parameter->sy;
 			for (j=0;j<tileheight;j+=scrtiley) {
 				for (i=0;i<tilewidth;i+=scrtilex) {
 					printf(".screen%dx%d",i/scrtilex,j/scrtiley);
-					for (ys=0;ys<scrtiley;ys++) {
+
+					for (ys=tiletrans=0;ys<scrtiley && !tiletrans;ys++) {
 						for (xs=0;xs<scrtilex;xs++) {
-							if (tileidx[(ys+j)*tilewidth+i+xs]) break;
+							if (tileidx[(ys+j)*tilewidth+i+xs]==-1) {
+								tiletrans=1;
+								break;
+							}
 						}
-						if (xs<scrtilex) break;
 					}
-					if (ys<scrtiley || xs<scrtilex) {
+					if (!tiletrans) {
 						printf("\nlzx0\n");
 
 						if (!parameter->splitLowHigh) {
@@ -2213,7 +2224,7 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 
 						printf("\nlzclose\n");
 					} else {
-						printf(" ; empty\n"); //@@TODO  c'est pas fini comme algo, tenir compte de la transparence!!!
+						printf(" ; empty (transparency not allowed)\n");
 					}
 				}
 			}
