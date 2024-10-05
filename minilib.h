@@ -547,13 +547,27 @@ void PNGWrite(struct s_png_info *photo, char *filename)
 
 	/* libpng does not handle linear memory... */
 	libpng_data=MemMalloc(sizeof(char*)*photo->height);
-	for (i=0;i<photo->height;i++) {
-		libpng_data[i]=MemMalloc(3*photo->width);
-	}
-	/* copy each rows from linear memory */
-	for (i=0;i<photo->height;i++) {
-		memcpy(libpng_data[i],photo->data+i*3*photo->width,3*photo->width);
-	}
+       /* copy each rows from linear memory */
+        switch (photo->color_type) {
+                default:
+                case PNG_COLOR_TYPE_RGB:
+			for (i=0;i<photo->height;i++) {
+				libpng_data[i]=MemMalloc(3*photo->width);
+			}
+                        for (i=0;i<photo->height;i++) {
+                                memcpy(libpng_data[i],photo->data+i*3*photo->width,3*photo->width);
+                        }
+                        break;
+                case PNG_COLOR_TYPE_RGBA:
+			for (i=0;i<photo->height;i++) {
+				libpng_data[i]=MemMalloc(4*photo->width);
+			}
+                        for (i=0;i<photo->height;i++) {
+                                memcpy(libpng_data[i],photo->data+i*4*photo->width,4*photo->width);
+                        }
+                        break;
+        }
+
 	/* then assign them to png struct */
 	png_set_rows(png_ptr,info_ptr,libpng_data);
 	png_write_png(png_ptr,info_ptr,PNG_TRANSFORM_IDENTITY,NULL);

@@ -64,10 +64,13 @@ struct s_parameter {
 	int grad;
 	int asmdump;
 	int tiles;
+	int cpccolorz;
+	int noalpha;
 	char *exportpalettefilename;
 	char *importpalettefilename;
 	/* screen options */
-	int single;
+	int single,splitLowHigh;
+	int scrx,scry;
 	int sx,sy;
 	int ox,oy;
 	int mask;
@@ -75,6 +78,8 @@ struct s_parameter {
 	int lineperblock;
 	int nblinescreen;
 	int splitraster;
+	int rastaline;
+	int skip_pixel;
 	/* hardware sprite options */
 	int hsp;
 	int scan,fontscan;
@@ -82,18 +87,22 @@ struct s_parameter {
 	int black;
 	int packed; /* 0, 4, 2 */
 	int forceextraction;
+	int transparency_color;
+	int search_transparency;
 	int keep_empty;
 	int metax,metay;
 	/* demomaking options */
 	int rotoffset;
+	int rotoheight;
 	char *rotoffsetfilename;
+	char *rotoheightfilename;
 	int heightmap;
 	char *heightmapfilename;
 };
 
 struct s_sprite_info {
 	int x,y;
-	int adr,size;
+	int tadr,adr,size;
 };
 
 #define MAXSPLIT 6
@@ -153,6 +162,7 @@ int GetIDXFromPixel(unsigned char *palette, unsigned char *pixel)
 	color_error(pixel[0],pixel[1],pixel[2]);
 	return -1;
 }
+
 int GetIDXFromPalette(unsigned char *palette, int r, int v, int b)
 {
 	#undef FUNC
@@ -222,6 +232,18 @@ int GetGAFromRGB(int r, int v, int b) {
 		default:printf(KERROR"unknown color for CPC\n"KNORMAL);exit(-1);
 	}
 	return ga;
+}
+void PushGA(int *GApal,int r, int v, int b) {
+	int i;
+	int gaval=GetGAFromRGB(r,v,b);
+	for (i=0;i<32;i++) {
+		if (GApal[i]==gaval) {
+			return;
+		} else if (!GApal[i]) {
+			GApal[i]=gaval;
+			return;
+		}
+	}
 }
 int GetBASICFromRGB(int r, int v, int b, int zeline) {
 	#undef FUNC
@@ -615,6 +637,13 @@ int cmpcol(const void *a, const void *b) {
 	ib=*(int*)b;
 	return ia-ib;
 }
+int cmprow(const void *a, const void *b) {
+	int ia,ib;
+
+	ia=*(int*)a;
+	ib=*(int*)b;
+	return ib-ia;
+}
 
 void DisplayPalette(int hsp, int max, unsigned char *palette)
 {
@@ -664,8 +693,9 @@ void Build(struct s_parameter *parameter)
                 c o n v e r t e r    v 2
         ****************************************/
 	unsigned char *cpcdata=NULL;        /* dynamic workspace */
-	int tileidx[65536];
-	int tilewidth;
+	int *tileidx=NULL;
+	int tilewidth,tileheight,tiletrans=-1;
+	int scrtilex,scrtiley;
 	int itile;
 	int idata=0;                        /* current output */
 	int pixrequested;                   /* how many pix do we need for a byte? */
@@ -712,6 +742,11 @@ void Build(struct s_parameter *parameter)
 	  L A R A   e x p o r t
 	***************************************************/
 	int decal,csx,theight;
+	/***************************************************
+	  raster line export
+	***************************************************/
+	int colorz_in_a_row[32]={0};
+	int colorz_prev_row[32]={0};
 
 	/*****************************
 	 * export de la transparence
@@ -725,7 +760,10 @@ void Build(struct s_parameter *parameter)
 		case 2:limitcolors=2;break;
 	}
 	limitcolors+=parameter->scan; /* border color for scan raise the max */
-	if (parameter->splitraster) limitcolors=27; /* no limit with rasters */
+	if (parameter->splitraster || parameter->rastaline) {
+		printf("split/raster mode rises colors up to 27\n");
+		limitcolors=27; /* no limit with rasters */
+	}
 
         photo=PNGRead32(parameter->filename);
         if (!photo) exit(-2);
@@ -744,12 +782,33 @@ void Build(struct s_parameter *parameter)
 		exit(0);
 	}
 
+	if (parameter->search_transparency) {
+		// on va prendre la couleur à la con qu'on retrouve partout, en particulier dans les coin...
+		r=photo->data[photo->width*4+0]&0xF0;
+		v=photo->data[photo->width*4+1]&0xF0;
+		b=photo->data[photo->width*4+2]&0xF0;
+	}
+
+	//*****************************************************
+	//                  import de palette
+	//*****************************************************
+
+	/* but first reduce colorset to fit 4096k */
+	for (i=0;i<photo->height*photo->width*4;i+=4) {
+		photo->data[i+0]&=0xF0;
+		photo->data[i+1]&=0xF0;
+		photo->data[i+2]&=0xF0;
+		/* pas de AND sur le canal ALPHA!!! */
+	}
+
 	if (parameter->importpalettefilename) {
 		/* load palette from a text file */
 		char separator,*curchar,*txtpalette;
-		int palsize,curcoul;
+		int palsize,curcoul,is_hsp;
+		int has_reduce=0;
+
         printf(KIO"Image %dx%d\n",photo->width,photo->height);
-		printf("import de palette RGB [%s]\n",parameter->importpalettefilename);
+		printf("import de palette GRB (not RGB!!!) [%s] => ",parameter->importpalettefilename);
 		palsize=FileGetSize(parameter->importpalettefilename);
 		txtpalette=MemMalloc(palsize);
 		FileReadBinary(parameter->importpalettefilename,txtpalette,palsize);
@@ -762,10 +821,25 @@ void Build(struct s_parameter *parameter)
 			printf(KERROR"\nERROR: invalid palette!\n"KNORMAL);
 			exit(-4);
 		}
+		if (strncmp(txtpalette,"defw ",5)) {
+			printf(KWARNING"Warning, old palette style! You need to generate proper palette again!\n");
+		}
+		if (strstr(txtpalette," HSP")) is_hsp=1; else is_hsp=0;
+		if (parameter->hsp!=is_hsp) {
+			printf(KWARNING"Warning, palette mode is different from output mode!\n");
+		}
+
 		/* parse text */
-		maxcoul=0;
+		if (is_hsp) {
+			palette[0]=1;
+			palette[1]=2;
+			palette[2]=3;
+		}
+		maxcoul=is_hsp;
 		while ((curchar=strchr(txtpalette,separator))!=NULL) {
-			if (maxcoul==17) {
+			if (maxcoul==16) {
+				printf(KERROR"\nERROR: invalid palette! too much colorz!\n"KNORMAL);
+				exit(-4);
 			}
 			*curchar=' ';
 			curchar++;
@@ -775,32 +849,58 @@ void Build(struct s_parameter *parameter)
 			palette[maxcoul*3+2]=(curcoul&0xF)<<4;
 			maxcoul++;
 		}
-		printf("%d couleur%s importée%s\n",maxcoul,maxcoul>1?"s":"",maxcoul>1?"s":"");
-
-		for (i=0;i<photo->height*photo->width*4;i++) {
-			photo->data[i]&=0xF0;
-		}
+		printf("%d couleur%s importée%s\n",maxcoul-is_hsp,maxcoul-is_hsp>1?"s":"",maxcoul-is_hsp>1?"s":"");
 
 		png_has_transparency=0;
 		for (i=0;i<photo->height*photo->width;i++) {
-			if (photo->data[i*4+3]>0) {
+			if (photo->data[i*4+3]>0) { //@@TODO parfaire les choses...
 			} else {
 				png_has_transparency=1;
 			}
 		}
 
-		//@@TODO faire une option pour ça
+		//*****************************************************
+		// Fusion de la palette importée avec l'image actuelle
+		//*****************************************************
 		for (i=0;i<photo->height*photo->width;i++) {
+			// we scan only visible colors in alpha channel
 			if (photo->data[i*4+3]>0) {
-				/* we scan only visible colors */
-				r=photo->data[i*4+0]&0xF0;
-				v=photo->data[i*4+1]&0xF0;
-				b=photo->data[i*4+2]&0xF0;
+				r=photo->data[i*4+0];
+				v=photo->data[i*4+1];
+				b=photo->data[i*4+2];
 
 				for (j=0;j<maxcoul;j++) {
 					if (r==palette[j*3+0] && v==palette[j*3+1] && b==palette[j*3+2]) break;
 				}
+				if (j==maxcoul && parameter->cpccolorz) {
+					// adjust pixel to palette
+					for (j=0;j<maxcoul;j++) {
+						if ((r<=0x10 && palette[j*3+0]<=0x10) || (r>=0xE0 && palette[j*3+0]>=0xE0) || (r>=0x70 && palette[j*3+0]>=0x70 && r<=0x90 && palette[j*3+0]<=0x90))
+						if ((v<=0x10 && palette[j*3+1]<=0x10) || (v>=0xE0 && palette[j*3+1]>=0xE0) || (v>=0x70 && palette[j*3+1]>=0x70 && v<=0x90 && palette[j*3+1]<=0x90))
+						if ((b<=0x10 && palette[j*3+2]<=0x10) || (b>=0xE0 && palette[j*3+2]>=0xE0) || (b>=0x70 && palette[j*3+2]>=0x70 && b<=0x90 && palette[j*3+2]<=0x90)) {
+							photo->data[i*4+0]=palette[j*3+0];
+							photo->data[i*4+1]=palette[j*3+1];
+							photo->data[i*4+2]=palette[j*3+2];
+							break;
+						}
+						       
+					}
+				}
+				// si on n'a pas trouvé la couleur dans la palette importée
 				if (j==maxcoul) {
+					if (j>=limitcolors) {
+						printf(KERROR"\nERROR: too much colors for this resolution! moar than %d colors\n"KNORMAL,limitcolors);
+						printf("RGB=%02X.%02X.%02X\n",r,v,b);
+						exit(-3);
+					} else {
+						palette[j*3+0]=r;
+						palette[j*3+1]=v;
+						palette[j*3+2]=b;
+						maxcoul++;
+					}
+					/*
+					 * @@TODO faire une option FORCE_FUSION
+					 *
 					// search for closest color
 					int distance=256*256*256,idist,curdist;
 					for (j=0;j<maxcoul;j++) {
@@ -813,6 +913,7 @@ void Build(struct s_parameter *parameter)
 					photo->data[i*4+0]=palette[idist*3+0];
 					photo->data[i*4+1]=palette[idist*3+1];
 					photo->data[i*4+2]=palette[idist*3+2];
+					*/
 				}
 			}
 		}
@@ -820,15 +921,6 @@ void Build(struct s_parameter *parameter)
 		MemFree(txtpalette);
 	} else {
 		/* as the bitmap is RGBA we must scan to find all colors */
-
-		/* but first reduce colorset to fit 4096k */
-		for (i=0;i<photo->height*photo->width*4;i+=4) {
-			photo->data[i+0]&=0xF0;
-			photo->data[i+1]&=0xF0;
-			photo->data[i+2]&=0xF0;
-			/* pas de AND sur le canal ALPHA!!! */
-		}
-
 		maxcoul=0;
 		png_has_transparency=0;
 		for (i=0;i<photo->height*photo->width;i++) {
@@ -859,10 +951,10 @@ void Build(struct s_parameter *parameter)
         printf(KIO"Image %dx%d with %d colors\n"KNORMAL,photo->width,photo->height,maxcoul);
 	}
 
-	for (i=0;i<maxcoul;i++) {
+/*	for (i=0;i<maxcoul;i++) {
 		printf("#%02X%02X%02X ",palette[i*3],palette[i*3+1],palette[i*3+2]);
 	}
-	printf("\n");
+	printf("\n");*/
 
 	/* il ne devrait pas y avoir plus de pixels que sur l'image d'origine */
 	transdata=malloc(photo->width*photo->height*2);
@@ -1031,7 +1123,8 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 				exit(-5);
 			}
 		}
-		if (png_has_transparency) {
+		if  (!parameter->importpalettefilename) { // on doit shifter dans tous les cas si on n'importe pas la palette car seule une palette importée sera pré-shiftée
+			// sauf si on a dit que le noir était la transparence...
 			if (!parameter->black) {
 				printf(KVERBOSE"shift palette colors to set transparency at zero index\n"KNORMAL);
 				memmove(palette+3,palette,3*15);
@@ -1120,8 +1213,8 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 
 
 		printf("paletteplus: defw ");
-		for (i=parameter->hsp;i<maxcoul+parameter->hsp-parameter->black;i++) {
-			printf("%s#%04X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
+		for (i=parameter->hsp;i<maxcoul;i++) {
+			printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
 		}
 		printf("\n");
 
@@ -1134,14 +1227,22 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 		}
 
 		if (parameter->exportpalettefilename) {
-			/* sortie en VRB */
-			char exporttmpcolor[32];
+			/* sortie en VRB + DEFW + info transparence */
+			char exporttmpcolor[128];
 			
 			FileRemoveIfExists(parameter->exportpalettefilename);
-			for (i=parameter->hsp;i<maxcoul+parameter->hsp-parameter->black;i++) {
-				sprintf(exporttmpcolor,"%s#%04X",i>parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
+			strcpy(exporttmpcolor,"defw ");
+			FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
+			// on va jusqu'au max des couleurs peu importe...
+			for (i=parameter->hsp;i<maxcoul;i++) {
+				sprintf(exporttmpcolor,"%s#%03X",i>parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
 				FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			}
+			// si on est en export HSP il faut conserver le décalage de la palette
+			if (parameter->hsp) {
+				strcpy(exporttmpcolor," ; HSP");
+			}
+			FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			strcpy(exporttmpcolor,"\n");
 			FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			FileWriteBinaryClose(parameter->exportpalettefilename);
@@ -1782,14 +1883,17 @@ int reg[MAXSPLIT];
 			printf("***********************************************\n");
 		}
 	} else {
-	/*************************************************
-	    s c r e e n   &   s p r i t e     m o d e
-	*************************************************/
+	/*************************************************************************************************************************************
+	 
+	                                                  s c r e e n   &   s p r i t e     m o d e
+
+	**************************************************************************************************************************************/
 		/* step */
 		if (parameter->tiles) {
 			printf("[mode tiles]\n");
 			tilewidth=0;
 			itile=0;
+			tileidx=malloc(sizeof(int)*photo->height*photo->width); // laaaaaaaaaaaaarge
 		}
 		if (parameter->single) {
 			istep=1;
@@ -1803,7 +1907,9 @@ int reg[MAXSPLIT];
 			}
 		}
 		printf("extraction from %d/%d to %d/%d step %d/%d istep %d\n",parameter->ox,parameter->oy,photo->width,photo->height,parameter->sx,parameter->sy,istep);
+		memset(colorz_prev_row,0,sizeof(colorz_in_a_row));
 		for (j=parameter->oy;j<photo->height;j+=parameter->sy) {
+			tileheight++; // on compte le nombre de tiles en hauteur
 			for (i=parameter->ox;i<photo->width;i+=parameter->sx) {
 				/* sprites automatic search */
 				AutoScan(parameter,photo,palette,&i,&j);
@@ -1811,6 +1917,7 @@ int reg[MAXSPLIT];
 				if (j+parameter->sy<=photo->height && i+parameter->sx<=photo->width) {
 					/* prepare sprite info */
 					curspi.adr=idata;
+					curspi.tadr=itrans;
 					for (ys=0;ys<parameter->sy;ys++) {
 						/* screen mode means adressing memory like CRTC does */
 						if (parameter->scrmode) {
@@ -1819,6 +1926,22 @@ int reg[MAXSPLIT];
 								printf(KERROR"trop de lignes parcourues (%d) pour faire une extraction encodée en entrelacé!\n",curline);
 								exit(5);
 							}
+						}
+						if (parameter->rastaline) {
+							memset(colorz_in_a_row,0,sizeof(colorz_in_a_row));
+							for (xs=0;xs<parameter->sx;xs+=istep) {
+								adr=((j+ys)*photo->width+i+xs)*4;
+								PushGA(colorz_in_a_row,photo->data[adr+0],photo->data[adr+1],photo->data[adr+2]);
+							}
+							qsort(colorz_in_a_row,32,sizeof(colorz_in_a_row),cmprow);
+
+							// build palette for the line
+							printf(".line%d defb ",ys);
+							for (xs=0;colorz_in_a_row[xs];xs++) {
+								printf("%s#%02X",xs?",":"",colorz_in_a_row[xs]);
+								GetRGBFromGA(colorz_in_a_row[xs], &palette[xs*3+0],&palette[xs*3+1],&palette[xs*3+2],0);
+							}
+							printf(" ; %d colorz%s\n",xs,xs>16?"TOO MUCH COLORZ":"");
 						}
 						for (xs=0;xs<parameter->sx;xs+=istep) {
 							adr=((j+ys)*photo->width+i+xs)*4;
@@ -1893,6 +2016,14 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 							if (idata>maxdata) maxdata=idata;
 						}
 					}
+
+					for (xs=curspi.tadr;xs<itrans;xs++) {
+						if (transdata[xs]) break;
+					}
+					if (xs==itrans) {
+						memset(&cpcdata[curspi.adr],0,curspi.size); // full trans => enforce no data
+					}
+
 					/* update sprite info */
 					curspi.size=maxdata-curspi.adr;
 					curspi.x=parameter->sx;
@@ -1907,9 +2038,9 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 								break;
 							}
 						}
-						tileidx[itile++]=scheck;
-						if (j==parameter->oy) tilewidth++;
-						if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info));
+						tileidx[itile++]=scheck; // on stocke la tile dans la megamap
+						if (j==parameter->oy) tilewidth++; // on compte la largeur sur la première ligne
+						if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info)); // on ajoute si la tile n'existait pas
 					} else {
 //printf("extraction %d %d/%d\n",ispi+1,curspi.x,curspi.y);
 						/* update sprite info */
@@ -1922,6 +2053,39 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 	}
 
 
+	if (parameter->rotoheight) {
+		int xcenter,ycenter,wmax,iridx=0;
+		float ang;
+		unsigned char *rotoffsetmap;
+		// contrôle de cohérence sur les données CPC produites en amont? Minimum
+		if (parameter->scrmode) {
+			printf("cannot process rotomap in screen mode...\n");
+			exit(-344);
+		}
+		// trouver le centre des données pour connaitre la hauteur maximale possible de la map
+		xcenter=parameter->sx>>1;
+		ycenter=parameter->sy>>1;
+		if (xcenter>ycenter) wmax=xcenter; else wmax=ycenter;
+
+		rotoffsetmap=malloc(wmax*256);
+		memset(rotoffsetmap,0,wmax*256);
+
+		// ensuite on part du centre
+		printf("rotoheight central byte will be: #%02X  wmax=%d\n",photo->data[(xcenter+ycenter*parameter->sx)*4],wmax);
+		// et on fait des cercles petit à petit
+		for (i=1;i<wmax;i++) {
+			for (j=0;j<256;j++) {
+				ang=(float)j/256.0*3.1415926545*2.0; // en radian
+				rotoffsetmap[iridx++]=photo->data[((int)(cos(ang)*((float)i+0.5))+xcenter+((int)(sin(ang)*((float)i+0.5))+ycenter)*parameter->sx)*4];
+			}
+		}
+
+		FileRemoveIfExists(parameter->rotoheightfilename);
+		FileWriteBinary(parameter->rotoheightfilename,rotoffsetmap,wmax*256);
+		FileWriteBinaryClose(parameter->rotoheightfilename);
+		free(rotoffsetmap);
+		printf(KIO"rotoheightmap written %d bytes\n"KNORMAL,wmax*256);
+	}
 	if (parameter->rotoffset) {
 		int xcenter,ycenter,wmax,iridx=0;
 		float ang;
@@ -1958,17 +2122,104 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 
 
 	if (parameter->tiles) {
-		i=j=0;
-		printf("tilemap\n");
-		while (i<itile) {
-			if (!j) printf("defb %d",tileidx[i++]); else printf(",%d",tileidx[i++]);
-			j++;
-			if (j==tilewidth) {
-				printf("\n");
-				j=0;
+		if (!parameter->scrx || !parameter->scry) {
+			printf(";*****************************\n");
+			printf(";       tilewidth=%d\n",tilewidth);
+			printf(";*****************************\n");
+			if (!parameter->splitLowHigh) {
+				i=j=0;
+				while (i<itile) {
+					if (!j) printf("%s %d",ispi>256?"defw":"defb",tileidx[i++]); else printf(",%d",tileidx[i++]);
+					j++;
+					if (j==tilewidth) {
+						printf("\n");
+						j=0;
+					}
+				}
+			} else {
+				i=j=0;
+				while (i<itile) {
+					if (!j) printf("defb %d",tileidx[i++]&0xFF); else printf(",%d",tileidx[i++]&0xFF);
+					j++;
+					if (j==tilewidth) {
+						printf("\n");
+						j=0;
+					}
+				}
+				if (ispi>256) {
+					// uniquement si on dépasse 8 bits en nombre de tiles
+					printf(".split\n");
+					i=j=0;
+					while (i<itile) {
+						if (!j) printf("defb %d",tileidx[i++]>>8); else printf(",%d",tileidx[i++]>>8);
+						j++;
+						if (j==tilewidth) {
+							printf("\n");
+							j=0;
+						}
+					}
+				}
 			}
+			printf("\n");
+		} else {
+			printf(";*****************************\n");
+			printf(";   tilescreen  %d x %d\n",tilewidth/scrtilex,tileheight/scrtiley);
+			printf(";*****************************\n");
+			scrtilex=parameter->scrx/parameter->sx;
+			scrtiley=parameter->scry/parameter->sy;
+			for (j=0;j<tileheight;j+=scrtiley) {
+				for (i=0;i<tilewidth;i+=scrtilex) {
+					printf(".screen%dx%d",i/scrtilex,j/scrtiley);
+					for (ys=0;ys<scrtiley;ys++) {
+						for (xs=0;xs<scrtilex;xs++) {
+							if (tileidx[(ys+j)*tilewidth+i+xs]) break;
+						}
+						if (xs<scrtilex) break;
+					}
+					if (ys<scrtiley || xs<scrtilex) {
+						printf("\nlzx0\n");
+
+						if (!parameter->splitLowHigh) {
+							for (ys=0;ys<scrtiley;ys++) {
+								if (ispi>256) printf("defw "); else printf("defb ");
+								for (xs=0;xs<scrtilex;xs++) {
+									if (xs) printf(",");
+									printf("%d",tileidx[(ys+j)*tilewidth+i+xs]);
+								}
+								printf("\n");
+							}
+						} else {
+							for (ys=0;ys<scrtiley;ys++) {
+								printf("defb ");
+								for (xs=0;xs<scrtilex;xs++) {
+									if (xs) printf(",");
+									printf("%d",tileidx[(ys+j)*tilewidth+i+xs]&0xFF);
+								}
+								printf("\n");
+							}
+							if (ispi>256) {
+								printf("; split\n");
+								// uniquement si on dépasse 8 bits
+								for (ys=0;ys<scrtiley;ys++) {
+									printf("defb ");
+									for (xs=0;xs<scrtilex;xs++) {
+										if (xs) printf(",");
+										printf("%d",tileidx[(ys+j)*tilewidth+i+xs]>>8);
+									}
+									printf("\n");
+								}
+							}
+						}
+
+						printf("\nlzclose\n");
+					} else {
+						printf(" ; empty\n"); //@@TODO  c'est pas fini comme algo, tenir compte de la transparence!!!
+					}
+				}
+			}
+			printf("\n");
+			printf("\n");
 		}
-		printf("\n");
 	}
 	/* info */
 	if (!parameter->scrmode) {
@@ -2043,37 +2294,39 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 		}
 		/***************** écriture des masques ******************************/
 		parameter->split*=2;
-		for (i=0;i<itrans;i++) {
-			/* si on n'a pas de transparence on n'écrit pas */
-			if (transdata[i]) {
-				woffset=0;
-				byteleft=itrans;
-				strcpy(newname+strlen(newname)-3,"t01");filenumber=2;
-				while (byteleft) {
-					FileRemoveIfExists(newname);
-					if (byteleft>parameter->split) {
-						if (filenumber<5) {
-							printf(KIO"writing %d bytes in %s\n"KNORMAL,parameter->split,newname);				
-						}
-						FileWriteBinary(newname,transdata+woffset,parameter->split);
-						woffset+=parameter->split;
-						FileWriteBinaryClose(newname);
-						byteleft-=parameter->split;
-						if (filenumber==5 && byteleft>0) {
-							printf("(...)\n");
-						}
-						/* set next filename */
+		if (!parameter->noalpha) { // pas obligé
+			for (i=0;i<itrans;i++) {
+				/* si on n'a pas de transparence on n'écrit pas */
+				if (transdata[i]) {
+					woffset=0;
+					byteleft=itrans;
+					strcpy(newname+strlen(newname)-3,"t01");filenumber=2;
+					while (byteleft) {
+						FileRemoveIfExists(newname);
+						if (byteleft>parameter->split) {
+							if (filenumber<5) {
+								printf(KIO"writing %d bytes in %s\n"KNORMAL,parameter->split,newname);				
+							}
+							FileWriteBinary(newname,transdata+woffset,parameter->split);
+							woffset+=parameter->split;
+							FileWriteBinaryClose(newname);
+							byteleft-=parameter->split;
+							if (filenumber==5 && byteleft>0) {
+								printf("(...)\n");
+							}
+							/* set next filename */
 
-						if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
-						else if (filenumber>=100) { printf("error\n");}
-					} else {
-						printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
-						FileWriteBinary(newname,transdata+woffset,byteleft);
-						byteleft=0;
+							if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
+							else if (filenumber>=100) { printf("error\n");}
+						} else {
+							printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
+							FileWriteBinary(newname,transdata+woffset,byteleft);
+							byteleft=0;
+						}
+						FileWriteBinaryClose(newname);
 					}
-					FileWriteBinaryClose(newname);
+					break;
 				}
-				break;
 			}
 		}
 		if (parameter->lara) {
@@ -2108,6 +2361,7 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 	if (mspi) {
 		MemFree(spinfo);
 	}
+	if (tileidx) MemFree(tileidx);
 }
 
 /***************************************
@@ -2178,21 +2432,27 @@ void Usage(char **argv)
 	printf("-exnfo <file>    export assembly informations about extracted zones\n");
 	printf("-expal <file>    export palette in a text file\n");
 	printf("-impal <file>    import palette from a text file\n");
+	printf("-cpccolor        round a little colorz for CPC\n");
+	printf("-noalpha         do not extract transparency map\n");
 	printf("\n");
 	printf("demomaking options:\n");
-	printf("-rotoffset <file> export rototexture for rotoffset\n");
-	printf("-heightmap <file> export heightmap\n");
+	printf("-rotoffset  <file> export rototexture for rotoffset\n");
+	printf("-rotoheight <file> export rotoheightmap for rotoffset\n");
+	printf("-heightmap  <file> export heightmap\n");
 	printf("\n");
 	printf("sprite options: (default progressive output)\n");
 	printf("-scan            scan sprites inside border\n");
 	printf("-fontscan        font extraction\n");
 	printf("-single          only one pixel per byte to the right side\n");
 	printf("-size <geometry> set sprite dimensions in pixels. Ex: -size 16x16 \n");
+	printf("-scrz <geometry> set screen dimensions in pixels. Ex: -size 320x200 \n");
+	printf("-splitLowHigh    export low bytes then high bytes for tilemap\n");
 	printf("-offset <pos>    set start offset from top/left ex: 20,2\n");
 	printf("-mask            add mask info to data (see doc)\n");
 	printf("-c <maxsprite>   maximum number of sprites to extract\n");
 	printf("-meta <geometry> gather sprites when scanning. Ex: -meta 3x2\n");
 	printf("-tiles           extract uniques sprites + map\n");
+
 	printf("\n");
 	printf("screen options:\n");
 	printf("-scr             enable screen output (interlaced data)\n");
@@ -2200,13 +2460,15 @@ void Usage(char **argv)
 	printf("-lb <nblines>    number of lines per block for screen output (for CPC+ split)\n");
 	printf("-ls <nblines>    number of lines of 1st screen in extended screen output\n");
 	printf("-w <width>       force output screen width in bytes\n");
-	printf("-splitraster     split-raster analysis\n");
+	printf("-splitraster     split-raster analysis (unfinished)\n");
+	printf("-rastaline       allow more color in global image and generate raster info\n");
 	printf("\n");
 	printf("hardware sprite options:\n");
 	printf("-hsp             enable hardware sprite mode\n");
 	printf("-meta <nxn>      extraction of meta sprites\n");
 	printf("-scan            scan sprites inside border\n");
 	printf("-b               black is transparency (keep real transparency)\n");
+	printf("-st              search transparency color\n");
 	printf("-p 4             store data 4bits+4bits in reverse order into a single byte\n");
 	printf("-p 2             store data 2+2+2+2bits in logical order into a single byte\n");
 	printf("-force           force extraction of incomplete sprites\n");
@@ -2249,7 +2511,11 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 				break;
 			case 'C':
 			case 'c':
-				parameter->maxextract=atoi(argv[++i]);
+				if (stricmp(argv[i],"-cpccolor")==0 || stricmp(argv[i],"-cpccolorz")==0) {
+					parameter->cpccolorz=1;
+				} else if (stricmp(argv[i],"-c")==0) {
+					parameter->maxextract=atoi(argv[++i]);
+				}
 				break;
 			case 'W':
 			case 'w':
@@ -2303,6 +2569,11 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 			case 'K':
 				parameter->keep_empty=1;
 				break;
+			case 'n':
+			case 'N':if (stricmp(argv[i],"-noalpha")==0) {
+					parameter->noalpha=1;
+				 }
+				 break;
 			case 'm':
 			case 'M':if (stricmp(argv[i],"-mask")==0) {
 					parameter->mask=1;
@@ -2358,7 +2629,17 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					 } else {
 						 Usage(argv);
 					 }
-				 }
+				} else if (stricmp(argv[i],"-rotoheight")==0) {
+					 if (i+1<argc) {
+						parameter->rotoheightfilename=argv[++i];
+						parameter->rotoheight=1;
+						parameter->single=1; // force single output!
+					 } else {
+						 Usage(argv);
+					 }
+				} else if (stricmp(argv[i],"-rastaline")==0) {
+					parameter->rastaline=1;
+				}
 				 break;
 			case 's':
 			case 'S':if (stricmp(argv[i],"-split")==0) {
@@ -2375,14 +2656,34 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 						parameter->split=atoi(argv[i]);
 						if (toupper(argv[i][strlen(argv[i])-1])=='K') parameter->split*=1024;
 					}
+				} else if (stricmp(argv[i],"-skip")==0) {
+					 if (i+1<argc) {
+						parameter->skip_pixel=argv[++i];
+					} else Usage(argv);
 				} else if (stricmp(argv[i],"-splitraster")==0) {
 					parameter->splitraster=1;
+				} else if (stricmp(argv[i],"-st")==0) {
+					parameter->search_transparency=1;
 				} else if (stricmp(argv[i],"-single")==0) {
 					parameter->single=1;
 				} else if (stricmp(argv[i],"-fontscan")==0) {
 					parameter->fontscan=1;
 				} else if (stricmp(argv[i],"-scan")==0) {
 					parameter->scan=1;
+				} else if (stricmp(argv[i],"-splitLowHigh")==0) {
+					parameter->splitLowHigh=1;
+				} else if (stricmp(argv[i],"-scrz")==0) {
+					i++;
+					if ((scissor=strchr(argv[i],'x'))!=NULL) {
+						parameter->scrx=atoi(argv[i]);
+						parameter->scry=atoi(scissor+1);
+						if (parameter->scrx>0 && parameter->scry>0) {
+						} else {
+							Usage(argv);
+						}
+					} else {
+						Usage(argv);
+					}
 				} else if (stricmp(argv[i],"-size")==0) {
 					i++;
 					if ((scissor=strchr(argv[i],'x'))!=NULL) {
@@ -2493,9 +2794,8 @@ void main(int argc, char **argv)
 	parameter.metax=1;
 	parameter.metay=1;
 
-	printf(KVERBOSE"%.*s.exe v2.0 / Edouard BERGE 2016-2019\n",(int)(sizeof(__FILENAME__)-3),__FILENAME__);
-	printf("powered by zlib & libpng\n");
-	printf(KNORMAL"\n");
+	printf(KVERBOSE"%.*s.exe v2.0 / Edouard BERGE 2016-2022",(int)(sizeof(__FILENAME__)-3),__FILENAME__);
+	printf(" / powered by zlib & libpng\n"KNORMAL);
 
 	GetParametersFromCommandLine(argc,argv,&parameter);
 
