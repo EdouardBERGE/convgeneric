@@ -63,13 +63,13 @@ struct s_parameter {
 	int split;
 	int grad;
 	int asmdump;
-	int tiles;
+	int tiles,metatiles;
 	int cpccolorz;
 	int noalpha;
 	char *exportpalettefilename;
 	char *importpalettefilename;
 	/* screen options */
-	int single,splitLowHigh;
+	int single,splitLowHigh,tilexclude;
 	int scrx,scry;
 	int sx,sy;
 	int ox,oy;
@@ -103,7 +103,10 @@ struct s_parameter {
 struct s_sprite_info {
 	int x,y;
 	int tadr,adr,size;
+	unsigned char *bitmap;
+	unsigned int ibitmap;
 };
+
 
 #define MAXSPLIT 6
 
@@ -694,7 +697,7 @@ void Build(struct s_parameter *parameter)
         ****************************************/
 	unsigned char *cpcdata=NULL;        /* dynamic workspace */
 	int *tileidx=NULL;
-	int tilewidth,tileheight,tiletrans;
+	int tilewidth,tileheight,tiletrans,tilexclude;
 	int scrtilex,scrtiley;
 	int itile;
 	int idata=0;                        /* current output */
@@ -753,6 +756,8 @@ void Build(struct s_parameter *parameter)
 	 ****************************/
 	unsigned char *transdata=NULL;
 	int itrans=0;
+
+	tilexclude=parameter->tilexclude;
 
 	switch (parameter->mode) {
 		default:break;
@@ -1273,6 +1278,7 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 				if (j+parameter->sy+metay<=photo->height && i+parameter->sx+metax<=photo->width) {
 					/* prepare sprite info */
 					curspi.adr=idata;
+					curspi.ibitmap=0;
 					for (ys=metay;ys<16+metay;ys++) {
 						ticpack=0; /* reset pixel counter */
 						for (xs=metax;xs<16+metax;xs++) {
@@ -1918,6 +1924,8 @@ int reg[MAXSPLIT];
 					/* prepare sprite info */
 					curspi.adr=idata;
 					curspi.tadr=itrans;
+					curspi.ibitmap=0;
+					curspi.bitmap=malloc(parameter->sy*parameter->sx*4); // RGBA
 					for (ys=0;ys<parameter->sy;ys++) {
 						/* screen mode means adressing memory like CRTC does */
 						if (parameter->scrmode) {
@@ -1946,7 +1954,7 @@ int reg[MAXSPLIT];
 						for (xs=0;xs<parameter->sx;xs+=istep) {
 							adr=((j+ys)*photo->width+i+xs)*4;
 							zepix=0;
-							// ALPHA CHANNEL if (photo->data[(i+xs+(j+ys)*photo->width)*4+3]>0) {
+							// ALPHA CHANNEL if (photo->data[(i+xs+(j+ys)*photo->width)*4+3]>0)
 							if (parameter->single) {
 								/* one pixel per byte to the right / same calculations for every modes */
 								pix2=GetIDXFromPalette(palette,photo->data[adr+0],photo->data[adr+1],photo->data[adr+2]);
@@ -2046,7 +2054,18 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 								}
 							}
 							tileidx[itile++]=scheck; // on stocke la tile dans la megamap
-							if (scheck==ispi) ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info)); // on ajoute si la tile n'existait pas
+							if (scheck==ispi) {
+								ObjectArrayAddDynamicValueConcat((void **)&spinfo,&ispi,&mspi,&curspi,sizeof(struct s_sprite_info)); // on ajoute si la tile n'existait pas
+								
+								for (ys=0;ys<parameter->sy;ys++) {
+									for (xs=0;xs<parameter->sx;xs++) {
+										curspi.bitmap[curspi.ibitmap++]=photo->data[(i+xs+(j+ys)*photo->width)*4];
+										curspi.bitmap[curspi.ibitmap++]=photo->data[(i+xs+(j+ys)*photo->width)*4+1];
+										curspi.bitmap[curspi.ibitmap++]=photo->data[(i+xs+(j+ys)*photo->width)*4+2];
+										curspi.bitmap[curspi.ibitmap++]=photo->data[(i+xs+(j+ys)*photo->width)*4+3];
+									}
+								}
+							}
 						} else {
 							tileidx[itile++]=-1; // transparence, maximum en négatif
 						}
@@ -2131,107 +2150,233 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 
 
 	if (parameter->tiles) {
-		if (!parameter->scrx || !parameter->scry) {
-			printf(";*****************************\n");
-			printf(";       tilewidth=%d\n",tilewidth);
-			printf(";*****************************\n");
-			if (!parameter->splitLowHigh) {
-				i=j=0;
-				while (i<itile) {
-					if (!j) printf("%s %d",ispi>256?"defw":"defb",tileidx[i++]); else printf(",%d",tileidx[i++]);
-					j++;
-					if (j==tilewidth) {
-						printf("\n");
-						j=0;
-					}
-				}
-			} else {
-				i=j=0;
-				while (i<itile) {
-					if (!j) printf("defb %d",tileidx[i++]&0xFF); else printf(",%d",tileidx[i++]&0xFF);
-					j++;
-					if (j==tilewidth) {
-						printf("\n");
-						j=0;
-					}
-				}
-				if (ispi>256) {
-					// uniquement si on dépasse 8 bits en nombre de tiles
-					printf(".split\n");
+		struct s_png_info *tilesPNG;
+		int extsize,idxspi=0;
+
+		if (!parameter->metatiles) {
+			if (!parameter->scrx || !parameter->scry) {
+				printf(";*****************************\n");
+				printf(";       tilewidth=%d\n",tilewidth);
+				printf(";*****************************\n");
+				if (!parameter->splitLowHigh) {
 					i=j=0;
 					while (i<itile) {
-						if (!j) printf("defb %d",tileidx[i++]>>8); else printf(",%d",tileidx[i++]>>8);
+						if (!j) printf("%s %d",ispi>256?"defw":"defb",tileidx[i++]); else printf(",%d",tileidx[i++]);
 						j++;
 						if (j==tilewidth) {
 							printf("\n");
 							j=0;
 						}
 					}
-				}
-			}
-			printf("\n");
-		} else {
-			scrtilex=parameter->scrx/parameter->sx;
-			scrtiley=parameter->scry/parameter->sy;
-			printf(";*****************************\n");
-			printf(";   tilescreen  %d x %d\n",tilewidth/scrtilex,tileheight/scrtiley);
-			printf(";*****************************\n");
-			for (j=0;j<tileheight;j+=scrtiley) {
-				for (i=0;i<tilewidth;i+=scrtilex) {
-					printf(".screen%dx%d",i/scrtilex,j/scrtiley);
-
-					for (ys=tiletrans=0;ys<scrtiley && !tiletrans;ys++) {
-						for (xs=0;xs<scrtilex;xs++) {
-							if (tileidx[(ys+j)*tilewidth+i+xs]==-1) {
-								tiletrans=1;
-								break;
+				} else {
+					i=j=0;
+					while (i<itile) {
+						if (!j) printf("defb %d",tileidx[i++]&0xFF); else printf(",%d",tileidx[i++]&0xFF);
+						j++;
+						if (j==tilewidth) {
+							printf("\n");
+							j=0;
+						}
+					}
+					if (ispi>256) {
+						// uniquement si on dépasse 8 bits en nombre de tiles
+						printf(".split\n");
+						i=j=0;
+						while (i<itile) {
+							if (!j) printf("defb %d",tileidx[i++]>>8); else printf(",%d",tileidx[i++]>>8);
+							j++;
+							if (j==tilewidth) {
+								printf("\n");
+								j=0;
 							}
 						}
 					}
-					if (!tiletrans) {
-						printf("\nlzx0\n");
+				}
+				printf("\n");
+			} else {
+				scrtilex=parameter->scrx/parameter->sx;
+				scrtiley=parameter->scry/parameter->sy;
+				printf(";*****************************\n");
+				printf(";   tilescreen  %d x %d\n",tilewidth/scrtilex,tileheight/scrtiley);
+				printf(";*****************************\n");
+				for (j=0;j<tileheight;j+=scrtiley) {
+					for (i=0;i<tilewidth;i+=scrtilex) {
+						int tilex;
+						printf(".screen%dx%d",i/scrtilex,j/scrtiley);
 
-						if (!parameter->splitLowHigh) {
-							for (ys=0;ys<scrtiley;ys++) {
-								if (ispi>256) printf("defw "); else printf("defb ");
-								for (xs=0;xs<scrtilex;xs++) {
-									if (xs) printf(",");
-									printf("%d",tileidx[(ys+j)*tilewidth+i+xs]);
+						for (ys=tiletrans=0;ys<scrtiley && !tiletrans;ys++) {
+							tilex=0;
+							for (xs=0;xs<scrtilex;xs++) {
+								if (tileidx[(ys+j)*tilewidth+i+xs]==-1) {
+									tiletrans=1;
+									break;
 								}
-								printf("\n");
-							}
-						} else {
-							for (ys=0;ys<scrtiley;ys++) {
-								printf("defb ");
-								for (xs=0;xs<scrtilex;xs++) {
-									if (xs) printf(",");
-									printf("%d",tileidx[(ys+j)*tilewidth+i+xs]&0xFF);
+								// one line
+								if (tileidx[(ys+j)*tilewidth+i+xs]==tilexclude) {
+									tilex++;
 								}
-								printf("\n");
 							}
-							if (ispi>256) {
-								printf("; split\n");
-								// uniquement si on dépasse 8 bits
+							if (tilex==scrtilex) tiletrans=1;
+						}
+						if (!tiletrans) {
+							printf("\nlzx0\n");
+
+							if (!parameter->splitLowHigh) {
+								for (ys=0;ys<scrtiley;ys++) {
+									if (ispi>256) printf("defw "); else printf("defb ");
+									for (xs=0;xs<scrtilex;xs++) {
+										if (xs) printf(",");
+										printf("%d",tileidx[(ys+j)*tilewidth+i+xs]);
+									}
+									printf("\n");
+								}
+							} else {
 								for (ys=0;ys<scrtiley;ys++) {
 									printf("defb ");
 									for (xs=0;xs<scrtilex;xs++) {
 										if (xs) printf(",");
-										printf("%d",tileidx[(ys+j)*tilewidth+i+xs]>>8);
+										printf("%d",tileidx[(ys+j)*tilewidth+i+xs]&0xFF);
 									}
 									printf("\n");
 								}
+								if (ispi>256) {
+									printf("; split\n");
+									// uniquement si on dépasse 8 bits
+									for (ys=0;ys<scrtiley;ys++) {
+										printf("defb ");
+										for (xs=0;xs<scrtilex;xs++) {
+											if (xs) printf(",");
+											printf("%d",tileidx[(ys+j)*tilewidth+i+xs]>>8);
+										}
+										printf("\n");
+									}
+								}
 							}
-						}
 
-						printf("\nlzclose\n");
-					} else {
-						printf(" ; empty (transparency not allowed)\n");
+							printf("\nlzclose\n");
+						} else {
+							printf(" ; empty (transparency not allowed)\n");
+						}
+					}
+				}
+				printf("\n");
+				printf("\n");
+			}
+		} else {
+			int **tlist=NULL;
+			int curmt[256]; // max allowed
+			int mtlist=0;
+			int imt;
+
+			FILE *metaFile;
+			// metatiles!
+			printf(";****************************************\n");
+			printf("            ;metatiles\n");
+			printf(";****************************************\n");
+			printf("; theorical maximum combination is %d\n",ispi*parameter->metatiles*parameter->metatiles);
+
+			tlist=malloc(sizeof(int*)*ispi*parameter->metatiles*parameter->metatiles); // maximum combination
+
+			strcpy(newname,parameter->filename);
+			strcpy(newname+strlen(newname)-3,"meta");
+			metaFile=fopen(newname,"wb");
+			fprintf(metaFile,";****************************************\n");
+			fprintf(metaFile,".metatiles\n");
+			fprintf(metaFile,";****************************************\n");
+
+			// extract only full metatiles
+			for (j=0;(j+parameter->metatiles)*tilewidth-1<itile;j+=parameter->metatiles) {
+				for (i=0;i+parameter->metatiles-1<tilewidth;i+=parameter->metatiles) {
+					for (ys=imt=0;ys<parameter->metatiles;ys++) {
+						for (xs=0;xs<parameter->metatiles;xs++) {
+							curmt[imt++]=tileidx[(j+ys)*tilewidth+i+xs];
+						}
+					}
+					// look for match
+					for (xs=0;xs<mtlist;xs++) {
+						if (!memcmp(tlist[xs],curmt,sizeof(int)*parameter->metatiles*parameter->metatiles)) break;
+					}
+					if (xs==mtlist) {
+						tlist[mtlist]=malloc(sizeof(int)*parameter->metatiles*parameter->metatiles);
+						memcpy(tlist[mtlist],curmt,sizeof(int)*parameter->metatiles*parameter->metatiles);
+						mtlist++;
 					}
 				}
 			}
-			printf("\n");
-			printf("\n");
+			fprintf(metaFile,"; %d metatile%s found\n",mtlist,mtlist>1?"s":"");
+			for (xs=0;xs<mtlist;xs++) {
+				fprintf(metaFile,".metatile%d defw ",xs); // on stocke des pointeurs, + efficient
+				for (i=0;i<parameter->metatiles*parameter->metatiles;i++) {
+					if (i) fprintf(metaFile,",");
+					fprintf(metaFile,".tile%d",tlist[xs][i]);
+				}
+				fprintf(metaFile,"\n");
+			}
+			fprintf(metaFile,"\n");
+
+			fprintf(metaFile,";****************************************\n");
+			fprintf(metaFile,".tilemap\n");
+			fprintf(metaFile,";****************************************\n");
+			for (j=0;(j+parameter->metatiles)*tilewidth-1<itile;j+=parameter->metatiles) {
+				fprintf(metaFile,".row%d %s ",j/parameter->metatiles,mtlist>256?"defw":"defb");
+				for (i=0;i+parameter->metatiles-1<tilewidth;i+=parameter->metatiles) {
+					for (ys=imt=0;ys<parameter->metatiles;ys++) {
+						for (xs=0;xs<parameter->metatiles;xs++) {
+							curmt[imt++]=tileidx[(j+ys)*tilewidth+i+xs];
+						}
+					}
+					// look for match
+					for (xs=0;xs<mtlist;xs++) {
+						if (!memcmp(tlist[xs],curmt,sizeof(int)*parameter->metatiles*parameter->metatiles)) break;
+					}
+					if (i) fprintf(metaFile,",");
+					fprintf(metaFile,"%d",xs);
+				}
+				fprintf(metaFile,"\n");
+			}
+
+
+			i=j=0;
+			while (i<itile) {
+				if (!j) printf("%s %d",ispi>256?"defw":"defb",tileidx[i++]); else printf(",%d",tileidx[i++]);
+				j++;
+				if (j==tilewidth) {
+					printf("\n");
+					j=0;
+				}
+			}
+			fclose(metaFile);
 		}
+
+		// export des tiles
+		tilesPNG=PNGInit(NULL);
+		tilesPNG->color_type=PNG_COLOR_TYPE_RGBA;
+		tilesPNG->bit_depth=8;
+		tilesPNG->compression_type=0;
+		extsize=(int)sqrt(ispi)+1; // nbtiles in a row
+		tilesPNG->width=extsize*parameter->sx;
+		tilesPNG->height=extsize*parameter->sy;
+		tilesPNG->data=malloc(tilesPNG->width*tilesPNG->height*4);
+		memset(tilesPNG->data,0,tilesPNG->width*tilesPNG->height*4);
+		printf("nbtiles=%d tilemap will be %dx%d => %dx%d\n",ispi,extsize,extsize,tilesPNG->width,tilesPNG->height);
+
+		for (j=0;j<extsize && idxspi<ispi;j++) {
+			for (i=0;i<extsize && idxspi<ispi;i++) {
+				// copy tile in the tilemap
+				unsigned int startOffset=(j*parameter->sy*tilesPNG->width+i*parameter->sx)*4;
+				for (ys=0;ys<parameter->sy;ys++) {
+					for (xs=0;xs<parameter->sx;xs++) {
+						tilesPNG->data[startOffset+(xs+ys*tilesPNG->width)*4+0]=spinfo[idxspi].bitmap[(xs+ys*parameter->sx)*4+0];
+						tilesPNG->data[startOffset+(xs+ys*tilesPNG->width)*4+1]=spinfo[idxspi].bitmap[(xs+ys*parameter->sx)*4+1];
+						tilesPNG->data[startOffset+(xs+ys*tilesPNG->width)*4+2]=spinfo[idxspi].bitmap[(xs+ys*parameter->sx)*4+2];
+						tilesPNG->data[startOffset+(xs+ys*tilesPNG->width)*4+3]=spinfo[idxspi].bitmap[(xs+ys*parameter->sx)*4+3];
+					}
+				}
+
+				idxspi++;
+			}
+		}
+		PNGWrite(tilesPNG,"tileSheet.png");
 	}
 	/* info */
 	if (!parameter->scrmode) {
@@ -2453,17 +2598,19 @@ void Usage(char **argv)
 	printf("-heightmap  <file> export heightmap\n");
 	printf("\n");
 	printf("sprite options: (default progressive output)\n");
-	printf("-scan            scan sprites inside border\n");
-	printf("-fontscan        font extraction\n");
-	printf("-single          only one pixel per byte to the right side\n");
-	printf("-size <geometry> set sprite dimensions in pixels. Ex: -size 16x16 \n");
-	printf("-scrz <geometry> set screen dimensions in pixels. Ex: -size 320x200 \n");
-	printf("-splitLowHigh    export low bytes then high bytes for tilemap\n");
-	printf("-offset <pos>    set start offset from top/left ex: 20,2\n");
-	printf("-mask            add mask info to data (see doc)\n");
-	printf("-c <maxsprite>   maximum number of sprites to extract\n");
-	printf("-meta <geometry> gather sprites when scanning. Ex: -meta 3x2\n");
-	printf("-tiles           extract uniques sprites + map\n");
+	printf("-scan             scan sprites inside border\n");
+	printf("-fontscan         font extraction\n");
+	printf("-single           only one pixel per byte to the right side\n");
+	printf("-size <geometry>  set sprite dimensions in pixels. Ex: -size 16x16 \n");
+	printf("-scrz <geometry>  set screen dimensions in pixels. Ex: -size 320x200 \n");
+	printf("-splitLowHigh     export low bytes then high bytes for tilemap\n");
+	printf("-tilexclude <n>   exclude tile number n for tilemap\n");
+	printf("-offset <pos>     set start offset from top/left ex: 20,2\n");
+	printf("-mask             add mask info to data (see doc)\n");
+	printf("-c <maxsprite>    maximum number of sprites to extract\n");
+	printf("-meta <geometry>  gather sprites when scanning. Ex: -meta 3x2\n");
+	printf("-tiles            extract uniques sprites + map\n");
+	printf("-metatiles <size> create metatiles translation table\n");
 
 	printf("\n");
 	printf("screen options:\n");
@@ -2589,6 +2736,17 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 			case 'm':
 			case 'M':if (stricmp(argv[i],"-mask")==0) {
 					parameter->mask=1;
+				} else if (stricmp(argv[i],"-metatiles")==0) {
+					if (i+1<argc) {
+						i++;
+						parameter->metatiles=atoi(argv[i]); // squared metatiles
+						if (parameter->metatiles<1 || parameter->metatiles>16) {
+							printf("Invalid metatiles value (2-16)\n");
+							Usage(argv);
+						}
+					} else {
+						Usage(argv);
+					}
 				} else if (stricmp(argv[i],"-meta")==0) {
 					i++;
 					if ((scissor=strchr(argv[i],'x'))!=NULL) {
@@ -2716,7 +2874,13 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 				break;
 			case 't':
 			case 'T':
-				if (stricmp(argv[i],"-tiles")==0) {
+				if (stricmp(argv[i],"-tilexclude")==0) {
+					if (i+1<argc) {
+						parameter->tilexclude=atoi(argv[++i]);
+					} else {
+						Usage(argv);
+					}
+				} else if (stricmp(argv[i],"-tiles")==0) {
 					parameter->tiles=1;
 				}
 				break;
@@ -2800,6 +2964,7 @@ void main(int argc, char **argv)
 
 	struct s_parameter parameter={0};
 	/* default */
+	parameter.tilexclude=-1;
 	parameter.lineperblock=8;
 	parameter.maxextract=1;
 	parameter.split=16384;
