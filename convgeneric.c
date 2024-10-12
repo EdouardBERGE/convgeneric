@@ -2152,57 +2152,66 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 	if (parameter->tiles) {
 		struct s_png_info *tilesPNG;
 		int extsize,idxspi=0;
+		FILE *metaFile;
 
 		if (!parameter->metatiles) {
 			if (!parameter->scrx || !parameter->scry) {
-				printf(";*****************************\n");
-				printf(";       tilewidth=%d\n",tilewidth);
-				printf(";*****************************\n");
+				strcpy(newname,parameter->filename);
+				strcpy(newname+strlen(newname)-3,"tilemap");
+				metaFile=fopen(newname,"wb");
+					
+				fprintf(metaFile,";*****************************\n");
+				fprintf(metaFile,";       tilewidth=%d\n",tilewidth);
+				fprintf(metaFile,";*****************************\n");
 				if (!parameter->splitLowHigh) {
 					i=j=0;
 					while (i<itile) {
-						if (!j) printf("%s %d",ispi>256?"defw":"defb",tileidx[i++]); else printf(",%d",tileidx[i++]);
+						if (!j) fprintf(metaFile,"%s %d",ispi>256?"defw":"defb",tileidx[i++]); else fprintf(metaFile,",%d",tileidx[i++]);
 						j++;
 						if (j==tilewidth) {
-							printf("\n");
+							fprintf(metaFile,"\n");
 							j=0;
 						}
 					}
 				} else {
 					i=j=0;
 					while (i<itile) {
-						if (!j) printf("defb %d",tileidx[i++]&0xFF); else printf(",%d",tileidx[i++]&0xFF);
+						if (!j) fprintf(metaFile,"defb %d",tileidx[i++]&0xFF); else fprintf(metaFile,",%d",tileidx[i++]&0xFF);
 						j++;
 						if (j==tilewidth) {
-							printf("\n");
+							fprintf(metaFile,"\n");
 							j=0;
 						}
 					}
 					if (ispi>256) {
 						// uniquement si on dépasse 8 bits en nombre de tiles
-						printf(".split\n");
+						fprintf(metaFile,".split\n");
 						i=j=0;
 						while (i<itile) {
-							if (!j) printf("defb %d",tileidx[i++]>>8); else printf(",%d",tileidx[i++]>>8);
+							if (!j) fprintf(metaFile,"defb %d",tileidx[i++]>>8); else fprintf(metaFile,",%d",tileidx[i++]>>8);
 							j++;
 							if (j==tilewidth) {
-								printf("\n");
+								fprintf(metaFile,"\n");
 								j=0;
 							}
 						}
 					}
 				}
-				printf("\n");
+				fprintf(metaFile,"\n");
 			} else {
+				strcpy(newname,parameter->filename);
+				strcpy(newname+strlen(newname)-3,"tilescreen");
+				metaFile=fopen(newname,"wb");
+
 				scrtilex=parameter->scrx/parameter->sx;
 				scrtiley=parameter->scry/parameter->sy;
-				printf(";*****************************\n");
-				printf(";   tilescreen  %d x %d\n",tilewidth/scrtilex,tileheight/scrtiley);
-				printf(";*****************************\n");
+				fprintf(metaFile,";*****************************\n");
+				fprintf(metaFile,";   tilescreen  %d x %d\n",tilewidth/scrtilex,tileheight/scrtiley);
+				fprintf(metaFile,";*****************************\n");
 				for (j=0;j<tileheight;j+=scrtiley) {
 					for (i=0;i<tilewidth;i+=scrtilex) {
 						int tilex;
-						printf(".screen%dx%d",i/scrtilex,j/scrtiley);
+						fprintf(metaFile,".screen%dx%d",i/scrtilex,j/scrtiley);
 
 						for (ys=tiletrans=0;ys<scrtiley && !tiletrans;ys++) {
 							tilex=0;
@@ -2219,48 +2228,48 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 							if (tilex==scrtilex) tiletrans=1;
 						}
 						if (!tiletrans) {
-							printf("\nlzx0\n");
+							fprintf(metaFile,"\nlzx0\n");
 
 							if (!parameter->splitLowHigh) {
 								for (ys=0;ys<scrtiley;ys++) {
-									if (ispi>256) printf("defw "); else printf("defb ");
+									if (ispi>256) fprintf(metaFile,"defw "); else fprintf(metaFile,"defb ");
 									for (xs=0;xs<scrtilex;xs++) {
-										if (xs) printf(",");
-										printf("%d",tileidx[(ys+j)*tilewidth+i+xs]);
+										if (xs) fprintf(metaFile,",");
+										fprintf(metaFile,"%d",tileidx[(ys+j)*tilewidth+i+xs]);
 									}
-									printf("\n");
+									fprintf(metaFile,"\n");
 								}
 							} else {
 								for (ys=0;ys<scrtiley;ys++) {
-									printf("defb ");
+									fprintf(metaFile,"defb ");
 									for (xs=0;xs<scrtilex;xs++) {
-										if (xs) printf(",");
-										printf("%d",tileidx[(ys+j)*tilewidth+i+xs]&0xFF);
+										if (xs) fprintf(metaFile,",");
+										fprintf(metaFile,"%d",tileidx[(ys+j)*tilewidth+i+xs]&0xFF);
 									}
-									printf("\n");
+									fprintf(metaFile,"\n");
 								}
 								if (ispi>256) {
-									printf("; split\n");
+									fprintf(metaFile,"; split\n");
 									// uniquement si on dépasse 8 bits
 									for (ys=0;ys<scrtiley;ys++) {
-										printf("defb ");
+										fprintf(metaFile,"defb ");
 										for (xs=0;xs<scrtilex;xs++) {
-											if (xs) printf(",");
-											printf("%d",tileidx[(ys+j)*tilewidth+i+xs]>>8);
+											if (xs) fprintf(metaFile,",");
+											fprintf(metaFile,"%d",tileidx[(ys+j)*tilewidth+i+xs]>>8);
 										}
-										printf("\n");
+										fprintf(metaFile,"\n");
 									}
 								}
 							}
 
-							printf("\nlzclose\n");
+							fprintf(metaFile,"\nlzclose\n");
 						} else {
-							printf(" ; empty (transparency not allowed)\n");
+							fprintf(metaFile," ; empty (transparency not allowed)\n");
 						}
 					}
 				}
-				printf("\n");
-				printf("\n");
+				fprintf(metaFile,"\n");
+				fprintf(metaFile,"\n");
 			}
 		} else {
 			int **tlist=NULL;
@@ -2268,12 +2277,8 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 			int mtlist=0;
 			int imt;
 
-			FILE *metaFile;
 			// metatiles!
-			printf(";****************************************\n");
-			printf("            ;metatiles\n");
-			printf(";****************************************\n");
-			printf("; theorical maximum combination is %d\n",ispi*parameter->metatiles*parameter->metatiles);
+			printf("; metatiles theorical maximum combination is %d\n",ispi*parameter->metatiles*parameter->metatiles);
 
 			tlist=malloc(sizeof(int*)*ispi*parameter->metatiles*parameter->metatiles); // maximum combination
 
@@ -2345,8 +2350,9 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 					j=0;
 				}
 			}
-			fclose(metaFile);
 		}
+		printf(KIO"writing tile file %s\n"KNORMAL,newname);
+		fclose(metaFile);
 
 		// export des tiles
 		tilesPNG=PNGInit(NULL);
