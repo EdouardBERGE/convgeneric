@@ -1,4 +1,4 @@
-### convgeneric
+# convgeneric
 
 convgeneric is a simple COMMAND LINE tool designed to transcode PNG files in almost any CPC format
 
@@ -28,7 +28,15 @@ As convgeneric can handle transparency, you may export up to 16 colors software 
 
 ## Tile extraction
 
-As software sprite extraction, you can submit an image, a tile size and convgeneric will extract a map, the tiles and some source code (prototype)
+As software sprite extraction, you can submit an image, a tile size and convgeneric will extract a map, the tiles and some source code
+
+### Tiled screens mode
+
+You set the dimensions of the screen in pixels then the global tilemap is splitted in a list of tilemaps prefixed with LZX0 crunch. Any transparent screen in the map wont be exported. That said, it means you can merge 2 big maps if you wanna use 2 tilesets, 2 palettes, ...
+
+### Metatile mode
+
+You can specify the width of a square to agregate tiles in metatiles. Then the tilemap will refer to metatiles
 
 ## Screen conversion
 
