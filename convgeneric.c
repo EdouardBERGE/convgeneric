@@ -1218,7 +1218,7 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 
 
 		printf("paletteplus: defw ");
-		for (i=parameter->hsp;i<maxcoul;i++) {
+		for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
 			printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
 		}
 		printf("\n");
