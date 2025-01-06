@@ -703,7 +703,8 @@ void Build(struct s_parameter *parameter)
 	int idata=0;                        /* current output */
 	int pixrequested;                   /* how many pix do we need for a byte? */
 	int limitcolors=16;                 /* max number of colors regarding the options */
-	int hasblack;                       /* index of black color if any, else -1 */
+	int hasblack,is_hsp;                       /* index of black color if any, else -1 */
+	int hsptr=-1,hsptv=-1,hsptb=-1;              /* transparency color */
 	struct s_sprite_info *spinfo=NULL;  /* info about extracted sprites */
 	struct s_sprite_info curspi={0};
 	int ispi=0,mspi=0;                  /* fast counters for sprite info struct */
@@ -788,10 +789,11 @@ void Build(struct s_parameter *parameter)
 	}
 
 	if (parameter->search_transparency) {
-		// on va prendre la couleur à la con qu'on retrouve partout, en particulier dans les coin...
-		r=photo->data[photo->width*4+0]&0xF0;
-		v=photo->data[photo->width*4+1]&0xF0;
-		b=photo->data[photo->width*4+2]&0xF0;
+		// on va prendre la couleur à la con qu'on retrouve partout, en particulier dans les coins...
+		// à faire évoluer avec un forcage RGB...
+		hsptr=photo->data[photo->width*4+0]&0xF0;
+		hsptv=photo->data[photo->width*4+1]&0xF0;
+		hsptb=photo->data[photo->width*4+2]&0xF0;
 	}
 
 	//*****************************************************
@@ -809,7 +811,7 @@ void Build(struct s_parameter *parameter)
 	if (parameter->importpalettefilename) {
 		/* load palette from a text file */
 		char separator,*curchar,*txtpalette;
-		int palsize,curcoul,is_hsp;
+		int palsize,curcoul;
 		int has_reduce=0;
 
         printf(KIO"Image %dx%d\n",photo->width,photo->height);
@@ -831,16 +833,18 @@ void Build(struct s_parameter *parameter)
 		}
 		if (strstr(txtpalette," HSP")) is_hsp=1; else is_hsp=0;
 		if (parameter->hsp!=is_hsp) {
-			printf(KWARNING"Warning, palette mode is different from output mode!\n");
+			printf(KWARNING"Warning, palette [%s] mode is different from output mode!\n",is_hsp?"HSP":"legacy");
 		}
 
 		/* parse text */
 		if (is_hsp) {
-			palette[0]=1;
-			palette[1]=2;
-			palette[2]=3;
+			// la couleur de la transparence
+			palette[0]=hsptr;
+			palette[1]=hsptv;
+			palette[2]=hsptb;
 		}
 		maxcoul=is_hsp;
+printf("palette=[%s]\n",txtpalette);
 		while ((curchar=strchr(txtpalette,separator))!=NULL) {
 			if (maxcoul==16) {
 				printf(KERROR"\nERROR: invalid palette! too much colorz!\n"KNORMAL);
@@ -849,10 +853,15 @@ void Build(struct s_parameter *parameter)
 			*curchar=' ';
 			curchar++;
 			curcoul=strtol(curchar,NULL,16);
-			palette[maxcoul*3+0]=curcoul&0xF0;
-			palette[maxcoul*3+1]=(curcoul&0xF00)>>4;
-			palette[maxcoul*3+2]=(curcoul&0xF)<<4;
-			maxcoul++;
+			r=curcoul&0xF0;
+			v=(curcoul&0xF00)>>4;
+			b=(curcoul&0xF)<<4;
+			if (r!=hsptr || v!=hsptv || b!=hsptb) {
+				palette[maxcoul*3+0]=curcoul&0xF0;
+				palette[maxcoul*3+1]=(curcoul&0xF00)>>4;
+				palette[maxcoul*3+2]=(curcoul&0xF)<<4;
+				maxcoul++;
+			}
 		}
 		printf("%d couleur%s importée%s\n",maxcoul-is_hsp,maxcoul-is_hsp>1?"s":"",maxcoul-is_hsp>1?"s":"");
 
@@ -925,6 +934,7 @@ void Build(struct s_parameter *parameter)
 
 		MemFree(txtpalette);
 	} else {
+		is_hsp=parameter->hsp;
 		/* as the bitmap is RGBA we must scan to find all colors */
 		maxcoul=0;
 		png_has_transparency=0;
@@ -1218,8 +1228,14 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 
 
 		printf("paletteplus: defw ");
-		for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
-			printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
+		if (parameter->importpalettefilename) {
+			for (i=parameter->hsp;i<maxcoul+parameter->hsp-(1-is_hsp);i++) {
+				printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
+			}
+		} else {
+			for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
+				printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
+			}
 		}
 		printf("\n");
 
@@ -1283,11 +1299,18 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 						ticpack=0; /* reset pixel counter */
 						for (xs=metax;xs<16+metax;xs++) {
 							/* transparency */
-							if (photo->data[(i+xs+(j+ys)*photo->width)*4+3]>0) {
-								zepix=GetIDXFromPixel(palette,&photo->data[(i+xs+(j+ys)*photo->width)*4+0]);
-								// RIEN A FAIRE!!! if (!parameter->black) zepix++;
-							} else {
+							if (parameter->search_transparency
+								&& photo->data[(i+xs+(j+ys)*photo->width)*4+0]==hsptr
+								&& photo->data[(i+xs+(j+ys)*photo->width)*4+1]==hsptv
+								&& photo->data[(i+xs+(j+ys)*photo->width)*4+2]==hsptb ) {
 								zepix=0;
+							} else {
+								if (photo->data[(i+xs+(j+ys)*photo->width)*4+3]>0) {
+									zepix=GetIDXFromPixel(palette,&photo->data[(i+xs+(j+ys)*photo->width)*4+0]);
+									// RIEN A FAIRE!!! if (!parameter->black) zepix++;
+								} else {
+									zepix=0;
+								}
 							}
 							/* output format */
 							switch (parameter->packed) {

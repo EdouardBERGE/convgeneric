@@ -354,6 +354,7 @@ printf("PNG opening [%s]\n",filename);
 				pixel_size=3;
 			}
 			png_set_palette_to_rgb(png_ptr);
+			png_info->bit_depth=8;
 			break;
 		case PNG_COLOR_TYPE_GRAY:
 				pixel_size=3;
@@ -454,7 +455,7 @@ printf("PNG read OK\n");
 					png_info->color_type=PNG_COLOR_TYPE_RGBA;
 					png_info->data=ImageFreeRRGGBBToRRGGBBAA(png_info->data,png_info->width,png_info->height);
 				} else {
-					logerr("INTERNAL ERROR - cannot process PNG BD:%d CT:%d",png_info->bit_depth,png_info->color_type);
+					logerr("INTERNAL ERROR - cannot process PNG BitDepth:%d ColType:%d",png_info->bit_depth,png_info->color_type);
 					exit(INTERNAL_ERROR);
 				}
 			}
