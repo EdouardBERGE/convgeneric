@@ -67,6 +67,7 @@ struct s_parameter {
 	int cpccolorz;
 	int noalpha;
 	char *exportpalettefilename;
+	char *exportpaletteBINfilename;
 	char *importpalettefilename;
 	/* screen options */
 	int single,splitLowHigh,tilexclude;
@@ -79,7 +80,7 @@ struct s_parameter {
 	int nblinescreen;
 	int splitraster;
 	int rastaline;
-	int skip_pixel;
+	int packAlpha;
 	/* hardware sprite options */
 	int hsp;
 	int scan,fontscan;
@@ -91,6 +92,7 @@ struct s_parameter {
 	int search_transparency;
 	int keep_empty;
 	int metax,metay;
+	int reverse;
 	/* demomaking options */
 	int rotoffset;
 	int rotoheight;
@@ -703,7 +705,7 @@ void Build(struct s_parameter *parameter)
 	int idata=0;                        /* current output */
 	int pixrequested;                   /* how many pix do we need for a byte? */
 	int limitcolors=16;                 /* max number of colors regarding the options */
-	int hasblack,is_hsp;                       /* index of black color if any, else -1 */
+	int hasblack,is_hsp=0;                       /* index of black color if any, else -1 */
 	int hsptr=-1,hsptv=-1,hsptb=-1;              /* transparency color */
 	struct s_sprite_info *spinfo=NULL;  /* info about extracted sprites */
 	struct s_sprite_info curspi={0};
@@ -1227,26 +1229,31 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 		}
 
 
-		printf("paletteplus: defw ");
-		if (parameter->importpalettefilename) {
-			for (i=parameter->hsp;i<maxcoul+parameter->hsp-(1-is_hsp);i++) {
-				printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
-			}
-		} else {
-			for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
-				printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
-			}
-		}
-		printf("\n");
+		//if (parameter->importpalettefilename) {
 
-		if (!parameter->hsp) {
-			printf("paletteGA:   defb ");
-			for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
+		printf("paletteplus: defw ");
+			for (i=parameter->hsp;i<maxcoul;i++) {
+				printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
+			}
+		printf("\n");
+		printf("paletteGA:   defb ");
+			for (i=parameter->hsp;i<maxcoul;i++) {
 				printf("%s#%02X",i-parameter->hsp?",":"",GetGAFromRGB(palette[i*3+0],palette[i*3+1],palette[i*3+2]));
 			}
-			printf("\n");
-		}
+		printf("\n");
 
+		if (parameter->exportpaletteBINfilename) {
+			FileRemoveIfExists(parameter->exportpaletteBINfilename);
+			for (i=parameter->hsp;i<maxcoul;i++) {
+				unsigned char xgreen,xBR;
+				xgreen=palette[i*3+1]>>4;
+				xBR=(palette[i*3+0]&0xF0)|(palette[i*3+2]>>4);
+				FileWriteBinary(parameter->exportpaletteBINfilename,&xBR,1);
+				FileWriteBinary(parameter->exportpaletteBINfilename,&xgreen,1);
+			}
+
+			FileWriteBinaryClose(parameter->exportpaletteBINfilename);
+		}
 		if (parameter->exportpalettefilename) {
 			/* sortie en VRB + DEFW + info transparence */
 			char exporttmpcolor[128];
@@ -1255,7 +1262,7 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 			strcpy(exporttmpcolor,"defw ");
 			FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			// on va jusqu'au max des couleurs peu importe...
-			for (i=parameter->hsp;i<maxcoul;i++) {
+			for (i=0;i<maxcoul;i++) {
 				sprintf(exporttmpcolor,"%s#%03X",i>parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
 				FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			}
@@ -1287,7 +1294,6 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 			for (i=parameter->ox;i<photo->width && ispi<parameter->maxextract;i+=parameter->metax) {
 				/* sprites automatic search */
 				//AutoScan(parameter,photo,palette,&i,&j);
-
 				// meta management
 				for (metay=0;metay<parameter->metay;metay+=16)
 				for (metax=0;metax<parameter->metax;metax+=16)
@@ -2286,6 +2292,12 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 							}
 
 							fprintf(metaFile,"\nlzclose\n");
+							fprintf(metaFile,".screenEnd%dx%d\n",i/scrtilex,j/scrtiley);
+							fprintf(metaFile,"save 'screen%dx%d.zx0',.screen%dx%d,.screenEnd%dx%d-.screen%dx%d\n",
+									i/scrtilex,j/scrtiley,
+									i/scrtilex,j/scrtiley,
+									i/scrtilex,j/scrtiley,
+									i/scrtilex,j/scrtiley);
 						} else {
 							fprintf(metaFile," ; empty (transparency not allowed)\n");
 						}
@@ -2443,7 +2455,14 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 	} else {
 		/**************** écriture des fichiers binaires *************/
 		if (!parameter->tiles) {
+			char pakaname[2048];
+			unsigned char *paka,amask;
+			int paki;
+			paka=malloc(byteleft*2);
 			woffset=0;
+			strcpy(pakaname,newname);
+			strcpy(pakaname+strlen(newname)-3,"p01");
+
 			while (byteleft) {
 				FileRemoveIfExists(newname);
 				if (byteleft>parameter->split) {
@@ -2451,8 +2470,24 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 						printf(KIO"writing %d bytes in %s\n"KNORMAL,parameter->split,newname);				
 					}
 					FileWriteBinary(newname,cpcdata+woffset,parameter->split);
-					woffset+=parameter->split;
 					FileWriteBinaryClose(newname);
+					/***************** écriture des packAlpha ******************************/
+					if (parameter->packAlpha) {
+						for (paki=0;paki<parameter->split;paki++) {
+							// mask first
+							paka[paki*2+1]=cpcdata[woffset+paki];
+							if (transdata[woffset*2+paki*2]) amask=0; else amask=0xAA;
+							if (!transdata[woffset*2+paki*2+1]) amask|=0x55;
+							paka[paki*2+0]=amask;
+						}
+						FileRemoveIfExists(pakaname);
+						FileWriteBinary(pakaname,paka,parameter->split*2);
+						FileWriteBinaryClose(pakaname);
+						if (filenumber<100) sprintf(pakaname+strlen(pakaname)-2,"%02d",filenumber);
+						else if (filenumber>=100) sprintf(pakaname+strlen(pakaname)-3,"%03d",filenumber);
+					}
+					/***********************************************************************/
+					woffset+=parameter->split;
 					byteleft-=parameter->split;
 					if (filenumber==5 && byteleft>0) {
 						printf("(...)\n");
@@ -2464,10 +2499,68 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 				} else {
 					printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
 					FileWriteBinary(newname,cpcdata+woffset,byteleft);
+					FileWriteBinaryClose(newname);
+					/***************** écriture des packAlpha ******************************/
+					if (parameter->packAlpha) {
+						for (paki=0;paki<byteleft;paki++) {
+							// mask first
+							paka[paki*2+1]=cpcdata[woffset+paki];
+							if (transdata[woffset*2+paki*2]) amask=0; else amask=0xAA;
+							if (!transdata[woffset*2+paki*2+1]) amask|=0x55;
+							paka[paki*2+0]=amask;
+						}
+						FileRemoveIfExists(pakaname);
+						FileWriteBinary(pakaname,paka,byteleft*2);
+						FileWriteBinaryClose(pakaname);
+					}
+					/***********************************************************************/
 					byteleft=0;
 				}
-				FileWriteBinaryClose(newname);
 			}
+			/***********************************************************************/
+			// start again in revert?
+			/***********************************************************************/
+			if (parameter->reverse && parameter->hsp) {
+				unsigned char byteTMP,revertConv[256];
+				byteleft=maxdata>idata?maxdata:idata; // arm again bytecount
+
+				// revert data
+				switch (parameter->packed) {
+					case 0:
+						if (byteleft&0xFF) { fprintf(stderr,"hardware sprite extraction error, could be 256 factor\n"); exit(1); }
+						for (j=0;j<byteleft;j+=256) {
+							for (i=j;i<j+256;i+=16) {
+								for (xs=0;xs<8;xs++) {
+									byteTMP=cpcdata[i+xs];
+									cpcdata[i+xs]=cpcdata[i+15-xs];
+									cpcdata[i+15-xs]=byteTMP;
+								}
+							}
+						}
+						break;
+					case 2:
+						if (byteleft&0x7F) { fprintf(stderr,"hardware sprite extraction error, could be 128 factor\n"); exit(1); }
+						for (i=0;i<256;i++) revertConv[i]=((i&15)<<4)|((i>>4)&15);
+						for (j=0;j<byteleft;j+=128) {
+							for (i=j;i<j+128;i+=8) {
+								for (xs=0;xs<4;xs++) {
+									byteTMP=revertConv[cpcdata[i+xs]];
+									cpcdata[i+xs]=revertConv[cpcdata[i+7-xs]];
+									cpcdata[i+7-xs]=byteTMP;
+								}
+							}
+						}
+						break;
+					case 4:printf("conversion @@TODO\n");
+					       break;
+					default:fprintf(stderr,"abnormal HSP packing error with revert\n");exit(1);
+				}
+
+			}
+
+
+
+			free(paka);
 		} else {
 			FileRemoveIfExists(newname);
 			byteleft=0;
@@ -2617,6 +2710,7 @@ void Usage(char **argv)
 	printf("-asmdump         output assembly dump\n");
 	printf("-exnfo <file>    export assembly informations about extracted zones\n");
 	printf("-expal <file>    export palette in a text file\n");
+	printf("-exbinpal <file> export Plus palette in a binary file\n");
 	printf("-impal <file>    import palette from a text file\n");
 	printf("-cpccolor        round a little colorz for CPC\n");
 	printf("-noalpha         do not extract transparency map\n");
@@ -2631,7 +2725,7 @@ void Usage(char **argv)
 	printf("-fontscan         font extraction\n");
 	printf("-single           only one pixel per byte to the right side\n");
 	printf("-size <geometry>  set sprite dimensions in pixels. Ex: -size 16x16 \n");
-	printf("-scrz <geometry>  set screen dimensions in pixels. Ex: -size 320x200 \n");
+	printf("-scrz <geometry>  set screen dimensions in pixels. Ex: -scrz 320x200 \n");
 	printf("-splitLowHigh     export low bytes then high bytes for tilemap\n");
 	printf("-tilexclude <n>   exclude tile number n for tilemap\n");
 	printf("-offset <pos>     set start offset from top/left ex: 20,2\n");
@@ -2640,6 +2734,7 @@ void Usage(char **argv)
 	printf("-meta <geometry>  gather sprites when scanning. Ex: -meta 3x2\n");
 	printf("-tiles            extract uniques sprites + map\n");
 	printf("-metatiles <size> create metatiles translation table\n");
+	printf("-packAlpha        create data+transparency mask datafile (.p01)\n");
 
 	printf("\n");
 	printf("screen options:\n");
@@ -2657,10 +2752,11 @@ void Usage(char **argv)
 	printf("-scan            scan sprites inside border\n");
 	printf("-b               black is transparency (keep real transparency)\n");
 	printf("-st              search transparency color\n");
-	printf("-p 4             store data 4bits+4bits in reverse order into a single byte\n");
-	printf("-p 2             store data 2+2+2+2bits in logical order into a single byte\n");
+	printf("-p 2             store data 4bits+4bits in reverse order into a single byte\n");
+	printf("-p 4             store data 2+2+2+2bits in logical order into a single byte\n");
 	printf("-force           force extraction of incomplete sprites\n");
 	printf("-k               keep empty sprites\n");
+	printf("-reverse         create additional sprites flipped left/right\n");
 
 	printf("\n");
 
@@ -2712,6 +2808,8 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 			case 'e':
 			case 'E':if (stricmp(argv[i],"-expal")==0) {
 					parameter->exportpalettefilename=argv[++i];
+				} else if (stricmp(argv[i],"-exbinpal")==0) {
+					parameter->exportpaletteBINfilename=argv[++i];
 				} else if (stricmp(argv[i],"-exnfo")==0) {
 					parameter->sheetfilename=argv[++i];
 				} else {
@@ -2819,6 +2917,23 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					Usage(argv);
 				}
 				break;
+			case 'p':
+			case 'P':
+				if (!argv[i][2]) {
+					if (i+1<argc) {
+						parameter->packed=atoi(argv[++i]);
+						switch (parameter->packed) {
+							case 2:
+							case 4:break;
+							default:Usage(argv);
+						}
+					} else Usage(argv);
+				} else if (strcmp(argv[i],"-packAlpha")==0) {
+					parameter->packAlpha=1;
+				} else {
+					Usage(argv);
+				}
+				break;
 			case 'r':
 			case 'R':if (stricmp(argv[i],"-rotoffset")==0) {
 					 if (i+1<argc) {
@@ -2836,9 +2951,11 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					 } else {
 						 Usage(argv);
 					 }
+				} else if (stricmp(argv[i],"-reverse")==0) {
+					parameter->reverse=1;
 				} else if (stricmp(argv[i],"-rastaline")==0) {
 					parameter->rastaline=1;
-				}
+				} else Usage(argv);
 				 break;
 			case 's':
 			case 'S':if (stricmp(argv[i],"-split")==0) {
@@ -2855,10 +2972,6 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 						parameter->split=atoi(argv[i]);
 						if (toupper(argv[i][strlen(argv[i])-1])=='K') parameter->split*=1024;
 					}
-				} else if (stricmp(argv[i],"-skip")==0) {
-					 if (i+1<argc) {
-						parameter->skip_pixel=argv[++i];
-					} else Usage(argv);
 				} else if (stricmp(argv[i],"-splitraster")==0) {
 					parameter->splitraster=1;
 				} else if (stricmp(argv[i],"-st")==0) {
@@ -2911,15 +3024,6 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					}
 				} else if (stricmp(argv[i],"-tiles")==0) {
 					parameter->tiles=1;
-				}
-				break;
-			case 'p':
-			case 'P':
-				parameter->packed=atoi(argv[++i]);
-				switch (parameter->packed) {
-					case 2:
-					case 4:break;
-					default:Usage(argv);
 				}
 				break;
 			case 'L':
@@ -2977,7 +3081,14 @@ void GetParametersFromCommandLine(int argc, char **argv, struct s_parameter *par
 		parameter->sy=16;
 	}
 
-printf("param OK file=[%s] split=%d scr=%d\nsplitraster=%d hsp=%d max=%d black is transparency=%d\n",parameter->filename,parameter->split,parameter->scrmode,parameter->splitraster,parameter->hsp,parameter->maxextract,parameter->black);
+	if (parameter->packAlpha && parameter->hsp) {
+		printf("packAlpha cannot be used with hardware sprite extraction (non-sense)\n");
+		exit(2);
+	}
+
+printf("param OK file=[%s] split=%d scr=%d\nsplitraster=%d hsp=%d max=%d black is transparency=%d",parameter->filename,parameter->split,parameter->scrmode,parameter->splitraster,parameter->hsp,parameter->maxextract,parameter->black);
+if (parameter->metax>1 || parameter->metay>1) printf(" meta=%dx%d",parameter->metax,parameter->metay);
+printf("\n");
 }
 
 /*
