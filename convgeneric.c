@@ -1135,9 +1135,15 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 			if (hasblack>=0 && parameter->black) {
 				printf("-> black color is transparency\n");
 			} else {
-				printf(KERROR"ERROR: 15 colors maximum for hardware sprites\n"KNORMAL);
-				DisplayPalette(0, maxcoul, palette);
-				exit(-5);
+				if (palette[0+14*3]==palette[0+15*3])
+				if (palette[1+14*3]==palette[1+15*3])
+				if (palette[2+14*3]==palette[2+15*3]) {
+					maxcoul--;
+				} else {
+					printf(KERROR"ERROR: 15 colors maximum for hardware sprites\n"KNORMAL);
+					DisplayPalette(0, maxcoul, palette);
+					exit(-5);
+				}
 			}
 		}
 		if  (!parameter->importpalettefilename) { // on doit shifter dans tous les cas si on n'importe pas la palette car seule une palette importée sera pré-shiftée
@@ -1232,7 +1238,14 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 		//if (parameter->importpalettefilename) {
 
 		printf("paletteplus: defw ");
-			for (i=parameter->hsp;i<maxcoul;i++) {
+		switch (parameter->mode) {
+			default:
+			case 0: if (maxcoul>16) maxcoul=16;break;
+			case 1: if (maxcoul>4) maxcoul=4;break;
+			case 2: if (maxcoul>2) maxcoul=2;break;
+		}
+
+			for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
 				printf("%s#%03X",i-parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
 			}
 		printf("\n");
@@ -1262,7 +1275,7 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 			strcpy(exporttmpcolor,"defw ");
 			FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			// on va jusqu'au max des couleurs peu importe...
-			for (i=0;i<maxcoul;i++) {
+			for (i=parameter->hsp;i<maxcoul+parameter->hsp;i++) {
 				sprintf(exporttmpcolor,"%s#%03X",i>parameter->hsp?",":"",(palette[i*3+0]&0xF0)|((palette[i*3+1]>>4)<<8)|(palette[i*3+2]>>4));
 				FileWriteBinary(parameter->exportpalettefilename,exporttmpcolor,strlen(exporttmpcolor));
 			}
@@ -2522,44 +2535,97 @@ if (pix1==-1 || pix2==-1 || pix3==-1 || pix4==-1) printf("pixel en %d/%d\n",i+xs
 			/***********************************************************************/
 			if (parameter->reverse && parameter->hsp) {
 				unsigned char byteTMP,revertConv[256];
+				int hspodd,hspeven,hspidx1,hspidx2,hsp1ref,hsp2ref;
+				int hspsize,hspmid,hspmax,hspmask;
 				byteleft=maxdata>idata?maxdata:idata; // arm again bytecount
+
+				// get back to unit (only metax is relevant)
+				parameter->metax>>=4;
+
+				// if we are odd, we will reverse inside last HSP lines
+				if (parameter->metax&1) hspodd=parameter->metax>>1; else hspodd=-1;
+				// set first even HSP indexes
+				hspidx1=0; hspidx2=parameter->metax-1;
 
 				// revert data
 				switch (parameter->packed) {
-					case 0:
-						if (byteleft&0xFF) { fprintf(stderr,"hardware sprite extraction error, could be 256 factor\n"); exit(1); }
-						for (j=0;j<byteleft;j+=256) {
-							for (i=j;i<j+256;i+=16) {
-								for (xs=0;xs<8;xs++) {
-									byteTMP=cpcdata[i+xs];
-									cpcdata[i+xs]=cpcdata[i+15-xs];
-									cpcdata[i+15-xs]=byteTMP;
-								}
-							}
-						}
+					case 0: hspsize=256;hspmid=8;hspmax=15;hspmask=0xFF;
+					       	for (i=0;i<256;i++) revertConv[i]=i;
 						break;
-					case 2:
-						if (byteleft&0x7F) { fprintf(stderr,"hardware sprite extraction error, could be 128 factor\n"); exit(1); }
-						for (i=0;i<256;i++) revertConv[i]=((i&15)<<4)|((i>>4)&15);
-						for (j=0;j<byteleft;j+=128) {
-							for (i=j;i<j+128;i+=8) {
-								for (xs=0;xs<4;xs++) {
-									byteTMP=revertConv[cpcdata[i+xs]];
-									cpcdata[i+xs]=revertConv[cpcdata[i+7-xs]];
-									cpcdata[i+7-xs]=byteTMP;
-								}
-							}
-						}
+					case 2: hspsize=128;hspmid=4;hspmax=7;hspmask=0x7F;
+					       	for (i=0;i<256;i++) revertConv[i]=((i&15)<<4)|((i>>4)&15);
 						break;
-					case 4:printf("conversion @@TODO\n");
-					       break;
+					case 4: hspsize=64;hspmid=2;hspmax=3;hspmask=0x3F;
+					       	for (i=0;i<256;i++) revertConv[i]=((i&3)<<6)|((i>>6)&3)|(((i>>4)&3)<<2)|(((i>>2)&3)<<4);
+						break;
 					default:fprintf(stderr,"abnormal HSP packing error with revert\n");exit(1);
 				}
 
+				if ((byteleft/parameter->metax)&hspmask) { fprintf(stderr,"hardware sprite extraction error, could be %dxwidth factor\n",hspmask+1); exit(1); }
+				j=0;
+				hsp1ref=hspidx1;
+				hsp2ref=hspidx2;
+				while (j<byteleft) {
+					printf("j (offset) = %d\n",j);
+					// invert even HSP (if any)
+					hspidx1=hsp1ref;
+					hspidx2=hsp2ref;
+					while (hspidx1<hspidx2) {
+						printf("invert %d and %d on the line\n",hspidx1,hspidx2);
+						for (i=0;i<hspsize;i+=hspmax+1) {
+							for (xs=0;xs<hspmax+1;xs++) {
+								byteTMP=revertConv[cpcdata[j+hspidx1*hspsize+i+xs]];
+								cpcdata[j+hspidx1*hspsize+i+xs]=revertConv[cpcdata[j+hspidx2*hspsize+i+hspmax-xs]];
+								cpcdata[j+hspidx2*hspsize+i+hspmax-xs]=byteTMP;
+							}
+						}
+						hspidx1++;
+						hspidx2--;
+					}
+
+					// invert odd HSP (if any)
+					if (hspodd>=0) {
+						printf("invert central hsp on the line\n");
+						for (i=0;i<hspsize;i+=hspmax+1) {
+							for (xs=0;xs<hspmid;xs++) {
+								byteTMP=revertConv[cpcdata[j+hspodd*hspsize+i+xs]];
+								cpcdata[j+hspodd*hspsize+i+xs]=revertConv[cpcdata[j+hspodd*hspsize+i+hspmax-xs]];
+								cpcdata[j+hspodd*hspsize+i+hspmax-xs]=byteTMP;
+							}
+						}
+					}
+					j+=parameter->metax*hspsize; // next bunch of sprite(s)
+				}
+
+				// reverse name...
+				filenumber=2;
+				woffset=0;
+				strcpy(newname+strlen(newname)-3,"rin");
+				while (byteleft) {
+					FileRemoveIfExists(newname);
+					if (byteleft>parameter->split) {
+						if (filenumber<5) {
+							printf(KIO"writing %d bytes in %s\n"KNORMAL,parameter->split,newname);				
+						}
+						FileWriteBinary(newname,cpcdata+woffset,parameter->split);
+						FileWriteBinaryClose(newname);
+						woffset+=parameter->split;
+						byteleft-=parameter->split;
+						if (filenumber==5 && byteleft>0) {
+							printf("(...)\n");
+						}
+						/* set next filename */
+						if (filenumber<100) sprintf(newname+strlen(newname)-2,"%02d",filenumber++);
+						else if (filenumber>=100) sprintf(newname+strlen(newname)-3,"%03d",filenumber++);
+
+					} else {
+						printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
+						FileWriteBinary(newname,cpcdata+woffset,byteleft);
+						FileWriteBinaryClose(newname);
+						byteleft=0;
+					}
+				}
 			}
-
-
-
 			free(paka);
 		} else {
 			FileRemoveIfExists(newname);
