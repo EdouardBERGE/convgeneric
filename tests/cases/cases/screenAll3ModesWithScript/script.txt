@@ -1,0 +1,3 @@
+screen160.png -m 0 -scr
+screen320.png -m 1 -scr
+screen640.png -m 2 -scr

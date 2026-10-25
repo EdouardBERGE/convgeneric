@@ -1,0 +1,2 @@
+screen.png -size 160x50 -expal paletteAsFirstSeen.txt -outputName screenAsSeen -c 4 -split 4000
+screen.png -size 160x50 -expal paletteSorted.txt -g -outputName screenSorted -c 4 -split 4000

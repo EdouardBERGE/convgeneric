@@ -1,0 +1,1 @@
+-impal sheet.pal sheet.png -getColor -hsp -expal newpal.pal

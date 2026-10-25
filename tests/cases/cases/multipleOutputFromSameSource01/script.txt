@@ -1,0 +1,2 @@
+screen.png -scr -expal paletteAsFirstSeen.txt -outputName screenAsSeen
+screen.png -scr -expal paletteSorted.txt -g -outputName screenSorted
