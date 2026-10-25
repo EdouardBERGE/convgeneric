@@ -298,7 +298,7 @@ struct s_png_info * _internal_PNGRead(char *filename, int want8, int wantALPHA)
 	#define FUNC "PNGRead"
 
 	FILE *fp;
-	int i,pixel_size,j;
+	int i,pixel_size=0,j;
 	unsigned char **libpng_data;
 	png_structp png_ptr;
 	png_infop   info_ptr;
@@ -319,17 +319,17 @@ printf("PNG opening [%s]\n",filename);
 	/* legacy libpng code */
 	if (png_sig_cmp(png_header,0,PNG_HEADER_SIZE)) {
 		logerr("This file is not a PNG picture");
-		exit(INTERNAL_ERROR);
+		return NULL;
 	}
 	if ((png_ptr=png_create_read_struct(PNG_LIBPNG_VER_STRING,NULL,NULL,NULL))==NULL) {
 		png_destroy_read_struct(&png_ptr,(png_infopp)NULL,(png_infopp)NULL);
 		logerr("PngLib error: cannot create read struct");
-		exit(INTERNAL_ERROR);
+		return NULL;
 	}
 	if ((info_ptr=png_create_info_struct(png_ptr))==NULL) {
 		png_destroy_read_struct(&png_ptr,&info_ptr,(png_infopp)NULL);
 		logerr("PngLib error: cannot create info struct");
-		exit(INTERNAL_ERROR);
+		return NULL;
 	}
 	
 	/* libpng cannot open png file by itself, so we do (crappy coders...) */
@@ -456,7 +456,7 @@ printf("PNG read OK\n");
 					png_info->data=ImageFreeRRGGBBToRRGGBBAA(png_info->data,png_info->width,png_info->height);
 				} else {
 					logerr("INTERNAL ERROR - cannot process PNG BitDepth:%d ColType:%d",png_info->bit_depth,png_info->color_type);
-					exit(INTERNAL_ERROR);
+					return NULL;
 				}
 			}
 		default:break;
@@ -516,7 +516,6 @@ void PNGWrite(struct s_png_info *photo, char *filename)
 	unsigned char **libpng_data;
 	png_structp png_ptr;
 	png_infop   info_ptr;
-	png_text    text_ptr={0};
 
 	if ((png_ptr=png_create_write_struct(PNG_LIBPNG_VER_STRING,NULL,NULL,NULL))==NULL) {
 		logerr("PngLib error: cannot create write struct");

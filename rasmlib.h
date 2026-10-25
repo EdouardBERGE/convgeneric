@@ -102,7 +102,6 @@ size_t strnlen (s, maxlen)
 #ifndef OS_WIN
 int stricmp(char *str1,char *str2)
 {
-        int idx;
         int c1,c2;
 
         if (!str1) return (!str2)?0:-(*str2);
@@ -119,7 +118,6 @@ int stricmp(char *str1,char *str2)
 
 int strnicmp(char *str1,char *str2,int l)
 {
-        int idx;
         int c1=0,c2=0;
 
         if (!l) return 0;
@@ -659,7 +657,7 @@ char *_internal_fgetsmulti(char *filename, int read_mode)
 	#define FUNC "_internal_fgetsmulti"
 	static char buffer[MAX_LINE_BUFFER+1]={0};
 	FILE *last_id=NULL;
-	char * (*_file_get_string)(char *, int, FILE *);
+	char * (*_file_get_string)(char *, int, FILE *) = fgets;
 	
 	last_id=FileOpen(filename,"r");
 	
@@ -695,7 +693,7 @@ char **_internal_fgetsmultilines(char *filename, int read_mode)
 	#define FUNC "_internal_fgetsmultilines"
 	static char buffer[MAX_LINE_BUFFER+1]={0};
 	FILE *last_id=NULL;
-	char * (*_file_get_string)(char *, int, FILE *);
+	char * (*_file_get_string)(char *, int, FILE *) = fgets;
 	char **lines_buffer=NULL;
 	int cur_line=0,max_line=0;
 	
@@ -812,7 +810,7 @@ int FileReadBinary(char *filename,char *data,int n)
 	#undef FUNC
 	#define FUNC "FileReadBinary"
 	FILE *last_id=NULL;
-	int nn;
+	int nn=0;
 	
 	last_id=FileOpen(filename,"rb");
 
@@ -866,7 +864,7 @@ int FileWriteBinary(char *filename,char *data,int n)
 	#undef FUNC
 	#define FUNC "FileWriteBinary"
 	FILE *last_id=NULL;
-	int nn;
+	int nn=0;
 								
 	#ifdef OS_WIN
 	last_id=FileOpen(filename,"w");
