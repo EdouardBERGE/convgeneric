@@ -28,6 +28,15 @@ for case in "$root"/tests/cases/*; do
                 ok=0
             fi
         done
+        if [ -f "$case/absent.txt" ]; then
+            while IFS= read -r bn; do
+                [ -z "$bn" ] && continue
+                if [ -e "$bn" ]; then
+                    echo "UNEXPECTED: $bn"
+                    ok=0
+                fi
+            done < "$case/absent.txt"
+        fi
         if [ "$ok" = "1" ]; then
             echo "PASS $name"
             passed=$((passed+1))
