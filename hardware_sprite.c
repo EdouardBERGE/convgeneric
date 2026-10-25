@@ -48,13 +48,13 @@ int processHardwareSprite(
 							/* output format */
 							switch (parameter->packed) {
 								case 0:
-									cpcdata[*idata++]=zepix;
+									cpcdata[(*idata)++]=zepix;
 									break;
 								case 2:
 									/* packed reversed */
 									switch (ticpack) {
 										case 0: cpcdata[*idata]=zepix; ticpack=1; break;
-										case 1: cpcdata[*idata++]|=zepix*16; ticpack=0; break;
+										case 1: cpcdata[(*idata)++]|=zepix*16; ticpack=0; break;
 										default: printf("warning remover\n"); break;
 									}
 									break;
@@ -64,7 +64,7 @@ int processHardwareSprite(
 										case 0: cpcdata[*idata]=zepix*64; ticpack=1; break;
 										case 1: cpcdata[*idata]|=zepix*16; ticpack=2; break;
 										case 2: cpcdata[*idata]|=zepix*4; ticpack=3; break;
-										case 3: cpcdata[*idata++]|=zepix; ticpack=0; break;
+										case 3: cpcdata[(*idata)++]|=zepix; ticpack=0; break;
 										default: printf("warning remover\n"); break;
 									}
 									break;
@@ -75,11 +75,11 @@ int processHardwareSprite(
 						/* fill smaller sprites with blank */
 						while (xs<16) {
 							switch (parameter->packed) {
-								case 0: cpcdata[*idata++]=0; break;
+								case 0: cpcdata[(*idata)++]=0; break;
 								case 2: /* packed reversed */
 									switch (ticpack) {
 										case 0: cpcdata[*idata]=0; ticpack=1; break;
-										case 1: *idata++; ticpack=0; break;
+										case 1: (*idata)++; ticpack=0; break;
 										default: printf("warning remover\n"); break;
 									}
 									break;
@@ -88,7 +88,7 @@ int processHardwareSprite(
 										case 0: cpcdata[*idata]=0; ticpack=1; break;
 										case 1: ticpack=2; break;
 										case 2: ticpack=3; break;
-										case 3: *idata++; ticpack=0; break;
+										case 3: (*idata)++; ticpack=0; break;
 										default: printf("warning remover\n"); break;
 									}
 									break;
@@ -99,9 +99,9 @@ int processHardwareSprite(
 					}
 					while (ys<16) {
 						switch (parameter->packed) {
-							case 0: for (xs=0;xs<16;xs++) cpcdata[*idata++]=0; break;
-							case 2: /* packed reversed */ for (xs=0;xs<8;xs++) cpcdata[*idata++]=0; break;
-							case 4: /* packed reversed */ for (xs=0;xs<4;xs++) cpcdata[*idata++]=0; break;
+							case 0: for (xs=0;xs<16;xs++) cpcdata[(*idata)++]=0; break;
+							case 2: /* packed reversed */ for (xs=0;xs<8;xs++) cpcdata[(*idata)++]=0; break;
+							case 4: /* packed reversed */ for (xs=0;xs<4;xs++) cpcdata[(*idata)++]=0; break;
 							default:printf("warning remover\n");break;
 						}
 						ys++;
