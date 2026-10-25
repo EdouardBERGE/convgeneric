@@ -65,7 +65,8 @@ void Usage(char **argv)
 	printf("-exbinpal <file>     export Plus palette in a binary file\n");
 	printf("-impal <file>        import palette from a text file\n");
 	printf("-cpccolor            round a little colorz for CPC\n");
-	printf("-noalpha             do not extract transparency map\n");
+	printf("-noalpha             skip transparency (t01,t02,...) output\n");
+	printf("-nobin               skip binary (bin,b01,...) output\n");
 	printf("-getColor            export/stop after palette processing\n");
 	printf("-o <file>            full output filename for binary\n");
 	printf("-script <file>       process each line of <file> as a command\n");
@@ -89,6 +90,7 @@ void Usage(char **argv)
 	printf("-c <maxsprite>    maximum number of sprites to extract\n");
 	printf("-meta <geometry>  gather sprites when scanning. Ex: -meta 3x2\n");
 	printf("-tiles            extract uniques sprites + map\n");
+	printf("-tileSheet <file> override default tileSheet.png output filename\n");
 	printf("-metatiles <size> create metatiles translation table\n");
 	printf("-packAlpha        create data+transparency mask datafile (.p01)\n");
 
@@ -218,6 +220,10 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 			case 'n':
 			case 'N':if (stricmp(argv[i],"-noalpha")==0) {
 					parameter->noalpha=1;
+				 } else if (stricmp(argv[i],"-nobin")==0) {
+					parameter->nobin=1;
+				 } else {
+					Usage(argv);
 				 }
 				 break;
 			case 'm':
@@ -388,6 +394,12 @@ int ParseOptions(char **argv,int argc, struct s_parameter *parameter)
 					}
 				} else if (stricmp(argv[i],"-tiles")==0) {
 					parameter->tiles=1;
+				} else if (stricmp(argv[i],"-tileSheet")==0) {
+					if (i+1<argc) {
+						parameter->tilesheetfilename=argv[++i];
+					} else {
+						Usage(argv);
+					}
 				}
 				break;
 			case 'L':

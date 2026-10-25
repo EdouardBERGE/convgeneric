@@ -71,6 +71,8 @@ struct s_parameter {
 	char *scriptfilename;
 	char *outputfilename;
 	char *sheetfilename;
+	char *tilesheetfilename;
+	int nobin;
 	/* lara option */
 	int lara;
 	/* general options */
@@ -1143,7 +1145,11 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 				idxspi++;
 			}
 		}
-		PNGWrite(tilesPNG,"tileSheet.png");
+		if (parameter->tilesheetfilename) {
+			PNGWrite(tilesPNG, parameter->tilesheetfilename);
+		} else {
+			PNGWrite(tilesPNG,"tileSheet.png");
+		}
 	}
 	/* info */
 	if (!parameter->scrmode) {
@@ -1189,7 +1195,8 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 		FileWriteBinaryClose(newname);
 	} else {
 		/**************** écriture des fichiers binaires *************/
-		if (!parameter->tiles) {
+		if (!parameter->nobin) {
+			if (!parameter->tiles) {
 			char pakaname[2048];
 			unsigned char *paka,amask;
 			int paki;
@@ -1358,6 +1365,7 @@ printf(KBLUE"expand image to %d\n"KNORMAL,photo->height);
 			}
 			FileWriteBinaryClose(newname);
 			printf(KIO"writing %d bytes in %s\n"KNORMAL,byteleft,newname);
+		}
 		}
 		/***************** écriture des masques ******************************/
 		parameter->split*=2;
